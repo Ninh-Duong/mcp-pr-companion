@@ -1,0 +1,12 @@
+{
+  "ticket_prefix": ["WCE-", "PROJ-", "JIRA-"],
+  "output_language": "vi",
+  "default_target_branch": "main",
+  "module_rules": {
+    "Database & Entity Models": ["**/*Context.cs", "**/Entities/**/*.cs", "**/Models/**/*.cs", "**/*.sql", "**/migrations/**"],
+    "APIs & Controllers": ["**/*Controller.cs", "**/Controllers/**/*.cs", "**/Routes/**/*.ts", "**/routes/**/*.js", "**/api/**/*.go"],
+    "Services & Business Logic": ["**/*Service.cs", "**/Services/**/*.cs", "**/usecases/**", "**/domain/**"],
+    "gRPC & External Integrations": ["**/*.proto", "**/*ProtoService.cs", "**/clients/**"],
+    "Infrastructure & Unit Tests": ["**/*Test.cs", "**/*Tests.cs", "**/*.spec.ts", "**/*.test.ts", "**/Extensions/*.cs", "**/utils/**"]
+  }
+}

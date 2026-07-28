@@ -1,0 +1,22 @@
+# Sensitive Config & Tokens (CRITICAL - DO NOT COMMIT)
+config.json
+config.local.json
+*.env
+*.env.local
+*.pem
+*.key
+
+# Temporary Data & Output Dumps
+output/
+temp/
+*.log
+
+# Dependencies & Build Outputs
+node_modules/
+dist/
+.build/
+.cache/
+
+# System Files
+.DS_Store
+Thumbs.db

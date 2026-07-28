@@ -1,0 +1,36 @@
+{
+  "name": "mcp-pr-companion",
+  "version": "1.0.0",
+  "description": "Local MCP Server for pre-processing Git PR diffs into compact JSON payloads for AI PR description generation",
+  "main": "dist/index.js",
+  "bin": {
+    "mcp-pr-companion": "bin/cli.js"
+  },
+  "type": "module",
+  "scripts": {
+    "setup": "node scripts/setup.js",
+    "build": "tsc",
+    "start": "node dist/mcp/server.js",
+    "dev": "tsx src/mcp/server.ts",
+    "healthcheck": "tsx src/healthcheck/healthcheck.ts"
+  },
+  "keywords": [
+    "mcp",
+    "git",
+    "pr-description",
+    "bitbucket",
+    "github",
+    "ast"
+  ],
+  "author": "Ninh Duong",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.6.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
