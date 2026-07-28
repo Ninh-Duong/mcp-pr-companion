@@ -2,6 +2,14 @@
   "ticket_prefix": ["WCE-", "PROJ-", "JIRA-"],
   "output_language": "vi",
   "default_target_branch": "main",
+  "bitbucket": {
+    "workspace": "YOUR_BITBUCKET_WORKSPACE",
+    "username": "your_email@company.com",
+    "app_password": "YOUR_BITBUCKET_APP_PASSWORD"
+  },
+  "github": {
+    "token": "YOUR_GITHUB_PERSONAL_ACCESS_TOKEN"
+  },
   "module_rules": {
     "Database & Entity Models": ["**/*Context.cs", "**/Entities/**/*.cs", "**/Models/**/*.cs", "**/*.sql", "**/migrations/**"],
     "APIs & Controllers": ["**/*Controller.cs", "**/Controllers/**/*.cs", "**/Routes/**/*.ts", "**/routes/**/*.js", "**/api/**/*.go"],

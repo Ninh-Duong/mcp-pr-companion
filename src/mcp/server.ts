@@ -32,10 +32,14 @@ async function startServer() {
       tools: [
         {
           name: 'generate_pr_payload',
-          description: 'Pre-extracts Git branch diffs, commits, and AST module categorizations into a compact JSON schema (~1-2KB) for AI PR description generation.',
+          description: 'Extracts Bitbucket PR or local Git branch diffs, commits, and AST module categorizations into a compact JSON schema (~1-2KB) for AI PR description generation.',
           inputSchema: {
             type: 'object',
             properties: {
+              pr_url: {
+                type: 'string',
+                description: 'Full Bitbucket PR URL (e.g., https://bitbucket.org/workspace/repo/pull-requests/123).'
+              },
               source_branch: {
                 type: 'string',
                 description: 'Source branch name (e.g., feature/WCE-815). Defaults to currently checked out branch.'
