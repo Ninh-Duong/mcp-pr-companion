@@ -11,13 +11,26 @@ It automatically parses Git diffs, commit histories, and code structures, catego
 - **Token Optimization**: Reduces AI context token consumption by **80% - 90%** by eliminating raw diff dumps.
 - **Speed**: Accelerates PR description generation by **5x - 10x**.
 - **Privacy & Security**: Operates 100% locally or via secure read-only Bitbucket API. Raw git diffs remain on your machine; only sanitized JSON summary metadata is passed to the AI.
+- **Auto-Archiving Each Execution**: Every execution automatically saves a timestamped JSON snapshot to `./output/description_kb_{PR_ID}_{TIMESTAMP}.json` for historical tracking and easy AI retrieval.
 - **Real-Time Step Logging**: Emits clean step-by-step progress logs to `stderr` during API connections and diff analysis.
+
+---
+
+## 💾 Automatic JSON File Archiving (`./output/`)
+
+Every time `generate_pr_payload` runs, a unique JSON file is automatically written to the `./output/` directory:
+
+- **Filename Pattern**: `description_kb_{ticketId_or_prId}_{timestamp}.json`
+- **Example File**: `./output/description_kb_WCE-815_pr_123_20260728_181235.json`
+
+> [!NOTE]
+> The `./output/` directory is **GIT IGNORED** via `.gitignore` to prevent any temporary data files from being committed to your source code repository.
 
 ---
 
 ## 🔐 Bitbucket API Credentials & Token Setup Guide
 
-To fetch Pull Request data directly via Bitbucket PR URLs (`https://bitbucket.org/{workspace}/{repo}/pull-requests/{id}`), you need to create a Bitbucket **App Password** with **Read-Only** permissions.
+To fetch Pull Request data directly via Bitbucket PR URLs (`https://bitbucket.org/{workspace}/{repo}/pull-requests/{id}`), create a Bitbucket **App Password** with **Read-Only** permissions.
 
 ### 🔑 How to Generate a Bitbucket App Password (Token):
 
@@ -64,7 +77,7 @@ During execution, `mcp-pr-companion` outputs detailed step-by-step progress logs
 [STEP 4/5] 📊 Fetching PR Diffstat and Raw Code Diff...
   ✓ Found 12 changed files (+450 / -60 lines)
 [STEP 5/5] 🧩 Classifying changed files into Modules & extracting Code Highlights...
-✅ [SUCCESS] Bitbucket PR Payload generated successfully!
+✅ [SUCCESS] Payload generated and saved to: ./output/description_kb_WCE-815_pr_123_20260728_181235.json
 ```
 
 ---
@@ -88,7 +101,7 @@ mcp-pr-companion/
 │   │   │   └── bitbucket.service.ts
 │   │   ├── git/                    # Local Git CLI runner & parsers
 │   │   ├── analyzer/               # Module classifier & code highlight extractor
-│   │   └── generator/              # Payload JSON builder (~1-2KB output)
+│   │   └── generator/              # Payload JSON builder (~1-2KB output & file saver)
 │   ├── mcp/                        # MCP Protocol implementation (Stdio Transport)
 │   │   ├── server.ts
 │   │   └── tools/                  # Registered tool: generate_pr_payload
@@ -97,6 +110,7 @@ mcp-pr-companion/
 │
 ├── ⚠️ config.json                  # [SENSITIVE] Local configuration (GIT IGNORED)
 ├── config.example.json             # Safe default configuration template
+├── 🔒 output/                      # [GIT IGNORED] Auto-saved PR JSON payload archives
 ├── .gitignore                      # Security rules ignoring tokens, keys & configs
 ├── package.json
 ├── tsconfig.json
@@ -156,4 +170,4 @@ Provide a Bitbucket PR link to your AI assistant:
 
 > *"Here is my PR link: `https://bitbucket.org/workspace/repo/pull-requests/123`. Please use `generate_pr_payload` to fetch data and write a PR description for Bitbucket."*
 
-The AI assistant will invoke `generate_pr_payload` locally, stream step-by-step progress to your console log, receive a lightweight ~1KB JSON summary, and render a formatted PR description.
+The AI assistant will invoke `generate_pr_payload` locally, stream step-by-step progress to your console log, save a snapshot file to `./output/description_kb_WCE-815_pr_123_20260728_181235.json`, receive a lightweight ~1KB JSON summary, and render a formatted PR description.
