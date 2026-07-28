@@ -15,16 +15,26 @@ It automatically parses Git diffs, commit histories, and code structures, catego
 
 ---
 
-## 🔐 Bitbucket API Credentials & Permission Scopes
+## 🔐 Bitbucket API Credentials & Token Setup Guide
 
-To fetch Pull Request data directly via Bitbucket PR URLs (`https://bitbucket.org/{workspace}/{repo}/pull-requests/{id}`), create a Bitbucket App Password with **Read-Only** permissions:
+To fetch Pull Request data directly via Bitbucket PR URLs (`https://bitbucket.org/{workspace}/{repo}/pull-requests/{id}`), you need to create a Bitbucket **App Password** with **Read-Only** permissions.
 
-### Required Scope Strings:
-- `pullrequest:read` (Bitbucket UI: **Pull requests -> Read**)
-- `repository:read` (Bitbucket UI: **Repositories -> Read**)
+### 🔑 How to Generate a Bitbucket App Password (Token):
 
-### Configuring `config.json`:
-Add your credentials to `config.json` (which is `.gitignore` protected):
+1. Log into [Bitbucket Cloud](https://bitbucket.org).
+2. Click your Avatar profile icon (Settings) -> Select **Personal settings**.
+3. In the left navigation menu under **Access Management**, click **App Passwords**.
+4. Click the **Create app password** button.
+5. Set a Label (e.g., `mcp-pr-companion`).
+6. **Check ONLY the following 2 Read permissions** for maximum security:
+   - ✅ **Pull requests**: `Read` (`pullrequest:read`)
+   - ✅ **Repositories**: `Read` (`repository:read`)
+7. Click **Create** and copy the generated App Password token.
+
+---
+
+### ⚙️ Configuring `config.json`:
+Paste your Bitbucket username and the generated App Password token into `config.json` (which is `.gitignore` protected):
 
 ```json
 {
@@ -34,7 +44,7 @@ Add your credentials to `config.json` (which is `.gitignore` protected):
   "bitbucket": {
     "workspace": "your-company-workspace",
     "username": "your_email@company.com",
-    "app_password": "YOUR_BITBUCKET_APP_PASSWORD"
+    "app_password": "ATBBxxxxxxxxxxxxxxxxxxxxxxxx"
   }
 }
 ```
