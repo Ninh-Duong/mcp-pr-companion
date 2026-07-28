@@ -3,15 +3,25 @@ import { CategorizedModule, ModuleClassifier } from '../analyzer/module.classifi
 import { ASTExtractor } from '../analyzer/ast.extractor.js';
 import { GitExecutor } from '../git/git.executor.js';
 import { GitParser } from '../git/git.parser.js';
+import { BitbucketService } from '../bitbucket/bitbucket.service.js';
+import { Logger } from '../../utils/logger.js';
 
 export interface PRPayloadOptions {
+  prUrl?: string;
   sourceBranch?: string;
   targetBranch?: string;
   repoPath?: string;
 }
 
 export class PayloadBuilder {
-  static build(options: PRPayloadOptions = {}) {
+  static async build(options: PRPayloadOptions = {}) {
+    // If a Bitbucket PR URL is provided, fetch via Bitbucket API
+    if (options.prUrl && options.prUrl.includes('bitbucket.org')) {
+      return await BitbucketService.fetchPRPayload(options.prUrl);
+    }
+
+    // Otherwise, fall back to local Git diff execution
+    Logger.info(`[STEP 1/5] 💻 Initializing Local Git Repository analysis...`);
     const config = ConfigLoader.load();
     const repoPath = options.repoPath || process.cwd();
     const git = new GitExecutor(repoPath);
@@ -19,12 +29,18 @@ export class PayloadBuilder {
     const sourceBranch = options.sourceBranch || git.getCurrentBranch() || 'HEAD';
     const targetBranch = options.targetBranch || config.default_target_branch || 'main';
 
+    Logger.info(`[STEP 2/5] 🌿 Target branches: ${sourceBranch} -> ${targetBranch}`);
     const author = git.getAuthorName();
+
+    Logger.info(`[STEP 3/5] 📜 Reading local commit log...`);
     const commits = git.getCommits(sourceBranch, targetBranch);
+
+    Logger.info(`[STEP 4/5] 📊 Calculating git diffstat & changed files...`);
     const diffStat = git.getDiffStat(sourceBranch, targetBranch);
     const changedFiles = git.getChangedFiles(sourceBranch, targetBranch);
     const rawDiff = git.getRawDiff(sourceBranch, targetBranch);
 
+    Logger.info(`[STEP 5/5] 🧩 Classifying modules & extracting code highlights...`);
     const ticketId = GitParser.extractTicketId(sourceBranch, commits, config.ticket_prefix);
     const title = GitParser.generatePRTitle(sourceBranch, ticketId, commits);
 
@@ -52,6 +68,8 @@ export class PayloadBuilder {
         highlights
       });
     }
+
+    Logger.info(`✅ [SUCCESS] Local Git PR Payload generated successfully!`);
 
     return {
       pr_info: {
