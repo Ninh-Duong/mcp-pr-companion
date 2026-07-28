@@ -1,48 +1,47 @@
-# 🚀 mcp-pr-companion (Local MCP Server)
+# 🚀 mcp-pr-companion
 
-`mcp-pr-companion` là một **Local MCP Server (Model Context Protocol)** chạy hoàn toàn cục bộ trên máy lập trình viên. 
+`mcp-pr-companion` is a **Local Model Context Protocol (MCP) Server** designed to run offline on developer workstations. 
 
-Dự án có nhiệm vụ tự động quét dữ liệu Git branch, phân tích raw diff, phân loại thay đổi theo từng tầng kiến trúc (Database, API Controllers, Services, gRPC, Unit Tests) bằng quy tắc gom nhóm AST/Regex, sau đó đóng gói thành một **JSON Payload siêu rút gọn (~1-2KB)**.
-
----
-
-## 🎯 Mục Đích & Đối Tượng Phục Vụ
-
-- **Mục đích**: 
-  - Cắt giảm **80% - 90% lượng token dư thừa** (không cần gửi toàn bộ raw diff hàng vạn dòng vào AI context).
-  - Tăng tốc độ sinh PR Description chuyên nghiệp gấp **5 - 10 lần**.
-  - Đảm bảo tính bảo mật: Mọi thao tác xử lý Git diff diễn ra 100% offline tại máy local trước khi gửi JSON đã làm sạch cho AI.
-- **Đối tượng phục vụ**: Software Engineers, Tech Leads, QA Reviewers làm việc với Bitbucket, GitHub, GitLab cần tạo PR Note/Description nhanh chóng, chính xác.
+It automatically parses local Git repository diffs, commit histories, and code structures, categorizing changes into architectural layers (Database, API Controllers, Services, gRPC, Unit Tests) via AST/Regex extraction rules. It then packages the extracted data into a **compact JSON payload (~1-2KB)** tailored for AI PR description generation.
 
 ---
 
-## 📁 Cấu Trúc Thư Mục & Lưu Ý Bảo Mật
+## 🎯 Purpose & Key Benefits
+
+- **Token Optimization**: Reduces AI context token consumption by **80% - 90%** by eliminating raw diff dumps.
+- **Speed**: Accelerates PR description generation by **5x - 10x**.
+- **Privacy & Security**: Operates 100% locally. Raw git diffs remain on your machine; only sanitized JSON summary metadata is passed to the AI.
+- **Target Audience**: Software Engineers, Tech Leads, and Code Reviewers working with Bitbucket, GitHub, or GitLab.
+
+---
+
+## 📁 Repository Structure & Security Guidelines
 
 ```
 mcp-pr-companion/
 ├── bin/
-│   └── cli.js                      # Entrypoint khởi chạy CLI
+│   └── cli.js                      # CLI execution entrypoint
 ├── scripts/
-│   └── setup.js                    # Kịch bản Auto-Setup 1-Click
+│   └── setup.js                    # 1-Click Auto-Setup & Healthcheck bootstrapper
 ├── src/
-│   ├── healthcheck/                # Quét kiểm tra môi trường Node, Git CLI
+│   ├── healthcheck/                # Environment pre-flight check (Node, Git CLI)
 │   │   └── healthcheck.ts
-│   ├── config/                     # Quản lý & validate file cấu hình
+│   ├── config/                     # Configuration schema & loader
 │   │   ├── config.loader.ts
 │   │   └── config.schema.ts
-│   ├── core/                       # Core logic bóc tách dữ liệu Git
-│   │   ├── git/                    # Thực thi lệnh git CLI local
-│   │   ├── analyzer/               # Phân loại module & trích xuất điểm nổi bật (Highlights)
-│   │   └── generator/              # Đóng gói JSON Payload (~1-2KB)
-│   ├── mcp/                        # Khởi tạo MCP Server (Stdio Transport)
+│   ├── core/                       # Core Git extraction & analysis logic
+│   │   ├── git/                    # Local Git CLI runner & parsers
+│   │   ├── analyzer/               # Module classifier & code highlight extractor
+│   │   └── generator/              # Payload JSON builder (~1-2KB output)
+│   ├── mcp/                        # MCP Protocol implementation (Stdio Transport)
 │   │   ├── server.ts
-│   │   └── tools/                  # Đăng ký tool: generate_pr_payload
+│   │   └── tools/                  # Registered tool: generate_pr_payload
 │   └── utils/
-│       └── logger.ts               # Log an toàn ra stderr (tránh nhiễu stdio)
+│       └── logger.ts               # Safe stderr logging (prevents stdio corruption)
 │
-├── ⚠️ config.json                  # [SENSITIVE] File cấu hình thực tế (ĐÃ IGNORE TRONG GIT)
-├── config.example.json             # File cấu hình mẫu (Commit an toàn)
-├── .gitignore                      # Ignore các file token, credential, config cá nhân
+├── ⚠️ config.json                  # [SENSITIVE] Local configuration (GIT IGNORED)
+├── config.example.json             # Safe default configuration template
+├── .gitignore                      # Security rules ignoring tokens, keys & configs
 ├── package.json
 ├── tsconfig.json
 └── README.md
@@ -50,30 +49,30 @@ mcp-pr-companion/
 
 > [!CAUTION]
 > **[⚠️ SENSITIVE DATA WARNING]**
-> File `config.json` có thể chứa cấu hình cá nhân hoặc quy tắc riêng của dự án. File này đã được thêm vào `.gitignore` để **NGĂN CHẶN TUYỆT ĐỐI** việc lỡ commit các thông tin nhạy cảm lên Git repository.
+> `config.json` stores local project rules and potential tokens. It is explicitly listed in `.gitignore` to **PREVENT ACCIDENTAL COMMITS** of sensitive data to remote repositories.
 
 ---
 
-## ⚙️ Hướng Dẫn Cài Đặt 1-Click (Quick Setup)
+## ⚙️ 1-Click Setup & Installation
 
-Khi kéo repository về bất kỳ môi trường hoặc máy mới nào, bạn chỉ cần thực hiện 1 lệnh duy nhất:
+When cloning this repository to any environment or machine, run the setup command:
 
 ```bash
 npm run setup
 ```
 
-**Kịch bản Auto-Setup sẽ tự động thực hiện 5 bước:**
-1. 🔍 **Check Node.js (>= 18) & Git CLI**.
-2. 📦 **Quét và cài đặt các packages thiếu (`npm install`)**.
-3. ⚙️ **Tự động tạo `config.json` từ `config.example.json` nếu chưa có**.
-4. 🛠️ **Biên dịch mã nguồn TypeScript (`npm run build`)**.
-5. ✅ **Kiểm tra trạng thái sẵn sàng (Healthcheck Complete)**.
+**The Auto-Setup bootstrapper automatically executes 5 steps:**
+1. 🔍 **Environment Verification**: Validates Node.js (>= 18) and Git CLI availability.
+2. 📦 **Dependency Resolution**: Automatically executes `npm install` if `node_modules` is missing.
+3. ⚙️ **Config Initialization**: Auto-creates `config.json` from `config.example.json` if missing.
+4. 🛠️ **TypeScript Build**: Compiles TypeScript source code into `./dist/`.
+5. ✅ **Healthcheck Verification**: Confirms system readiness.
 
 ---
 
-## 🛠️ Hướng Dẫn Cấu Hình MCP Client
+## 🛠️ MCP Client Integration Setup
 
-Để nhúng `mcp-pr-companion` vào trợ lý AI (như Antigravity CLI, VSCode MCP, hoặc Claude Desktop), bạn bổ sung đoạn cấu hình Stdio vào file cài đặt MCP:
+To connect `mcp-pr-companion` with your AI Assistant (e.g., Antigravity CLI, VSCode MCP, or Claude Desktop), add the relative path execution command to your MCP configuration file:
 
 ```json
 {
@@ -81,7 +80,7 @@ npm run setup
     "mcp-pr-companion": {
       "command": "node",
       "args": [
-        "d:/VisualStudioCode/mcp-pr-companion/dist/mcp/server.js"
+        "./dist/mcp/server.js"
       ],
       "env": {}
     }
@@ -89,12 +88,14 @@ npm run setup
 }
 ```
 
+*Note: Replace `./dist/mcp/server.js` with the relative path to the `mcp-pr-companion` installation directory on your machine.*
+
 ---
 
-## 🚀 Cách Sử Dụng Với AI
+## 🚀 Usage Example
 
-Sau khi tích hợp, bạn chỉ cần gửi câu lệnh đơn giản cho AI:
+Once integrated, ask your AI assistant:
 
-> *"Tôi vừa xong branch `feature/WCE-815-staging`. Bạn hãy dùng tool `generate_pr_payload` để lấy data rồi gen giúp tôi bản PR Description dán vào Bitbucket."*
+> *"I just completed work on branch `feature/WCE-815-staging`. Please call the `generate_pr_payload` tool to inspect the changes and generate a PR description for Bitbucket."*
 
-AI sẽ gọi tool `generate_pr_payload` từ Local MCP Server, nhận về JSON payload ~1KB và tạo ra PR Description hoàn hảo chỉ trong vài giây!
+The AI assistant will invoke `generate_pr_payload` locally, receive a lightweight ~1KB JSON summary, and render a formatted PR description in seconds.
