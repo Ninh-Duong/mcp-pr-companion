@@ -1,6 +1,6 @@
 # 🚀 mcp-pr-companion
 
-`mcp-pr-companion` is a **Local Model Context Protocol (MCP) Server** designed to run offline on developer workstations or connect directly to Bitbucket Cloud REST API.
+`mcp-pr-companion` is a **Local Model Context Protocol (MCP) Server** and **Standalone CLI Tool** designed to run offline on developer workstations or connect directly to Bitbucket Cloud REST API.
 
 It automatically parses Git diffs, commit histories, and code structures, categorizing changes into architectural layers (Database, API Controllers, Services, gRPC, Unit Tests) via AST/Regex extraction rules. It then packages the extracted data into a **compact JSON payload (~1-2KB)** tailored for AI PR description generation.
 
@@ -8,17 +8,38 @@ It automatically parses Git diffs, commit histories, and code structures, catego
 
 ## 🎯 Purpose & Key Benefits
 
+- **Dual-Mode Execution**: Works seamlessly as an **Automated MCP Server** (invoked by AI) OR as a **Standalone Terminal CLI** (run manually by developers).
 - **Token Optimization**: Reduces AI context token consumption by **80% - 90%** by eliminating raw diff dumps.
 - **Speed**: Accelerates PR description generation by **5x - 10x**.
 - **Privacy & Security**: Operates 100% locally or via secure read-only Bitbucket API. Raw git diffs remain on your machine; only sanitized JSON summary metadata is passed to the AI.
 - **Auto-Archiving Each Execution**: Every execution automatically saves a timestamped JSON snapshot to `./output/description_kb_{PR_ID}_{TIMESTAMP}.json` for historical tracking and easy AI retrieval.
-- **Real-Time Step Logging**: Emits clean step-by-step progress logs to `stderr` during API connections and diff analysis.
+
+---
+
+## 💻 Manual CLI Execution (Run Directly from Terminal)
+
+You can run `mcp-pr-companion` manually from your Terminal at any time!
+
+### 1. Generate via Bitbucket PR URL:
+```bash
+npm run generate -- --url https://bitbucket.org/workspace/repo/pull-requests/123
+```
+
+### 2. Generate via Local Git Branch Comparison:
+```bash
+npm run generate -- --source feature/WCE-815-staging --target main
+```
+
+### 3. Display Help & Options:
+```bash
+npm run generate -- --help
+```
 
 ---
 
 ## 💾 Automatic JSON File Archiving (`./output/`)
 
-Every time `generate_pr_payload` runs, a unique JSON file is automatically written to the `./output/` directory:
+Every time `mcp-pr-companion` executes (via CLI or MCP Server), a unique JSON file is automatically written to `./output/`:
 
 - **Filename Pattern**: `description_kb_{ticketId_or_prId}_{timestamp}.json`
 - **Example File**: `./output/description_kb_WCE-815_pr_123_20260728_181235.json`
@@ -87,10 +108,12 @@ During execution, `mcp-pr-companion` outputs detailed step-by-step progress logs
 ```
 mcp-pr-companion/
 ├── bin/
-│   └── cli.js                      # CLI execution entrypoint
+│   └── cli.js                      # CLI execution entrypoint (Supports CLI flags & Stdio)
 ├── scripts/
 │   └── setup.js                    # 1-Click Auto-Setup & Healthcheck bootstrapper
 ├── src/
+│   ├── cli/                        # Manual Terminal CLI Runner
+│   │   └── cli.runner.ts
 │   ├── healthcheck/                # Environment pre-flight check (Node, Git CLI)
 │   │   └── healthcheck.ts
 │   ├── config/                     # Configuration schema & loader
@@ -111,7 +134,6 @@ mcp-pr-companion/
 ├── ⚠️ config.json                  # [SENSITIVE] Local configuration (GIT IGNORED)
 ├── config.example.json             # Safe default configuration template
 ├── 🔒 output/                      # [GIT IGNORED] Auto-saved PR JSON payload archives
-├── .gitignore                      # Security rules ignoring tokens, keys & configs
 ├── package.json
 ├── tsconfig.json
 └── README.md
@@ -121,6 +143,10 @@ mcp-pr-companion/
 
 ## ⚙️ Available Commands & Scripts
 
+- **Run Manual Payload Generation**:
+  ```bash
+  npm run generate -- --url https://bitbucket.org/workspace/repo/pull-requests/123
+  ```
 - **1-Click Setup & Installation Bootstrapper**:
   ```bash
   npm run setup

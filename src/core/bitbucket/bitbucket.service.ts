@@ -12,6 +12,7 @@ export interface ParsedBitbucketURL {
 
 export class BitbucketService {
   static parsePRUrl(prUrl: string): ParsedBitbucketURL | null {
+    if (!prUrl) return null;
     const match = prUrl.match(/bitbucket\.org\/([^\/]+)\/([^\/]+)\/pull-requests\/(\d+)/i);
     if (!match) return null;
     return {
@@ -21,7 +22,22 @@ export class BitbucketService {
     };
   }
 
-  static async fetchPRPayload(prUrl: string) {
+  static async fetchPRPayload(inputUrl?: string) {
+    const config = ConfigLoader.load();
+    const bbConfig = config.bitbucket || {};
+
+    // Auto-detect PR URL from parameter OR config
+    let prUrl = inputUrl || config.default_pr_url || bbConfig.default_pr_url;
+    
+    // Smart Fallback: If user pasted a full PR URL into bitbucket.workspace field
+    if (!prUrl && bbConfig.workspace && bbConfig.workspace.includes('bitbucket.org')) {
+      prUrl = bbConfig.workspace;
+    }
+
+    if (!prUrl) {
+      throw new Error('No Bitbucket PR URL provided and no default_pr_url found in config.json.');
+    }
+
     Logger.info(`[STEP 1/5] 🌐 Parsing Bitbucket PR URL: ${prUrl}`);
 
     const parsed = this.parsePRUrl(prUrl);
@@ -31,17 +47,14 @@ export class BitbucketService {
       throw new Error(errMsg);
     }
 
-    const config = ConfigLoader.load();
-    const bbConfig = config.bitbucket || {};
-
-    const workspace = parsed.workspace || bbConfig.workspace;
+    const workspace = parsed.workspace;
     const repoSlug = parsed.repoSlug;
     const prId = parsed.prId;
 
     const username = bbConfig.username?.trim();
     const appPassword = bbConfig.app_password?.trim();
 
-    // Check for missing or placeholder credentials
+    // Check for missing credentials
     if (!username || !appPassword || appPassword.includes('YOUR_BITBUCKET') || username.includes('your_email')) {
       const configErrMsg = [
         '========================================================================',
