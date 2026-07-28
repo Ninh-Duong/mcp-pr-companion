@@ -12,7 +12,8 @@
     "build": "tsc",
     "start": "node dist/mcp/server.js",
     "dev": "tsx src/mcp/server.ts",
-    "healthcheck": "tsx src/healthcheck/healthcheck.ts"
+    "healthcheck": "tsx src/healthcheck/healthcheck.ts",
+    "generate": "node dist/cli/cli.runner.js"
   },
   "keywords": [
     "mcp",

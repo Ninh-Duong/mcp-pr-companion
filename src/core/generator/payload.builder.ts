@@ -17,23 +17,26 @@ export interface PRPayloadOptions {
 
 export class PayloadBuilder {
   static async build(options: PRPayloadOptions = {}) {
+    const config = ConfigLoader.load();
     let payload: any;
     let identifier = 'local';
 
-    // If a Bitbucket PR URL is provided, fetch via Bitbucket API
-    if (options.prUrl && options.prUrl.includes('bitbucket.org')) {
-      const parsed = BitbucketService.parsePRUrl(options.prUrl);
+    const effectivePrUrl = options.prUrl || config.default_pr_url || config.bitbucket?.default_pr_url || 
+      (config.bitbucket?.workspace && config.bitbucket.workspace.includes('bitbucket.org') ? config.bitbucket.workspace : undefined);
+
+    // If a Bitbucket PR URL is provided or configured in config.json
+    if (effectivePrUrl && effectivePrUrl.includes('bitbucket.org')) {
+      const parsed = BitbucketService.parsePRUrl(effectivePrUrl);
       if (parsed) {
         identifier = `pr_${parsed.prId}`;
       }
-      payload = await BitbucketService.fetchPRPayload(options.prUrl);
+      payload = await BitbucketService.fetchPRPayload(effectivePrUrl);
       if (payload.pr_info?.ticket_id && payload.pr_info.ticket_id !== 'N/A') {
         identifier = `${payload.pr_info.ticket_id}_pr_${parsed?.prId || 'bb'}`;
       }
     } else {
       // Otherwise, fall back to local Git diff execution
       Logger.info(`[STEP 1/5] 💻 Initializing Local Git Repository analysis...`);
-      const config = ConfigLoader.load();
       const repoPath = options.repoPath || process.cwd();
       const git = new GitExecutor(repoPath);
 
@@ -123,7 +126,7 @@ export class PayloadBuilder {
     }
 
     const now = new Date();
-    const timestamp = now.toISOString().replace(/[-:]/g, '').replace('T', '_').split('.')[0]; // e.g. 20260728_181235
+    const timestamp = now.toISOString().replace(/[-:]/g, '').replace('T', '_').split('.')[0];
     const fileName = `description_kb_${identifier}_${timestamp}.json`;
     const filePath = path.join(outputDir, fileName);
 
