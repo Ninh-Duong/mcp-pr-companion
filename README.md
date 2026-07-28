@@ -53,20 +53,44 @@ mcp-pr-companion/
 
 ---
 
-## ⚙️ 1-Click Setup & Installation
+## ⚙️ Available Commands & Scripts
 
-When cloning this repository to any environment or machine, run the setup command:
-
+### 1. One-Click Setup & Installation Bootstrapper
+Run this command when cloning the repository to a new environment:
 ```bash
 npm run setup
 ```
+**This bootstrapper automatically:**
+1. 🔍 Checks Node.js (>= 18) and Git CLI availability.
+2. 📦 Runs `npm install` if `node_modules` is missing.
+3. ⚙️ Auto-creates `config.json` from `config.example.json` if missing.
+4. 🛠️ Compiles TypeScript into `./dist/`.
+5. ✅ Verifies system readiness.
 
-**The Auto-Setup bootstrapper automatically executes 5 steps:**
-1. 🔍 **Environment Verification**: Validates Node.js (>= 18) and Git CLI availability.
-2. 📦 **Dependency Resolution**: Automatically executes `npm install` if `node_modules` is missing.
-3. ⚙️ **Config Initialization**: Auto-creates `config.json` from `config.example.json` if missing.
-4. 🛠️ **TypeScript Build**: Compiles TypeScript source code into `./dist/`.
-5. ✅ **Healthcheck Verification**: Confirms system readiness.
+---
+
+### 2. Running the Local MCP Server
+
+- **Start Production MCP Server**:
+  ```bash
+  npm start
+  ```
+  *(Runs `node dist/mcp/server.js` listening over Stdio transport).*
+
+- **Start Development Mode (Hot Reload / Live TS)**:
+  ```bash
+  npm run dev
+  ```
+
+- **Run Pre-flight Healthcheck**:
+  ```bash
+  npm run healthcheck
+  ```
+
+- **Build TypeScript Project**:
+  ```bash
+  npm run build
+  ```
 
 ---
 
