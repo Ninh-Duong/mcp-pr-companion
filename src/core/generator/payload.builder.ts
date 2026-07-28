@@ -7,6 +7,7 @@ import { GitExecutor } from '../git/git.executor.js';
 import { GitParser } from '../git/git.parser.js';
 import { BitbucketService } from '../bitbucket/bitbucket.service.js';
 import { Logger } from '../../utils/logger.js';
+import { I18n } from '../../utils/i18n.js';
 
 export interface PRPayloadOptions {
   prUrl?: string;
@@ -18,6 +19,7 @@ export interface PRPayloadOptions {
 export class PayloadBuilder {
   static async build(options: PRPayloadOptions = {}) {
     const config = ConfigLoader.load();
+    const lang = config.output_language || 'vi';
     let payload: any;
     let identifier = 'local';
 
@@ -66,7 +68,7 @@ export class PayloadBuilder {
       }
 
       const categorizedFiles = ModuleClassifier.classify(changedFiles, config.module_rules);
-      const fileHighlights = ASTExtractor.extractHighlights(changedFiles, rawDiff);
+      const fileHighlights = ASTExtractor.extractHighlights(changedFiles, rawDiff, lang);
 
       const changesByModule: CategorizedModule[] = [];
 
@@ -80,7 +82,7 @@ export class PayloadBuilder {
 
         const highlights = Array.from(highlightsSet);
         if (highlights.length === 0) {
-          highlights.push(`Cập nhật và tối ưu hóa các file thuộc module ${moduleName}`);
+          highlights.push(I18n.getModuleFallbackHighlight(moduleName, lang));
         }
 
         changesByModule.push({
@@ -98,7 +100,7 @@ export class PayloadBuilder {
           target_branch: targetBranch,
           author
         },
-        commit_summary: commits.length > 0 ? commits : ['Cập nhật nguồn mã nguồn'],
+        commit_summary: commits.length > 0 ? commits : [I18n.getCommitSummaryFallback(lang)],
         diff_stat: {
           total_files_changed: diffStat.totalFilesChanged,
           total_additions: diffStat.totalAdditions,

@@ -3,6 +3,7 @@ import { CategorizedModule, ModuleClassifier } from '../analyzer/module.classifi
 import { ASTExtractor } from '../analyzer/ast.extractor.js';
 import { GitParser } from '../git/git.parser.js';
 import { Logger } from '../../utils/logger.js';
+import { I18n } from '../../utils/i18n.js';
 
 export interface ParsedBitbucketURL {
   workspace: string;
@@ -24,6 +25,7 @@ export class BitbucketService {
 
   static async fetchPRPayload(inputUrl?: string) {
     const config = ConfigLoader.load();
+    const lang = config.output_language || 'vi';
     const bbConfig = config.bitbucket || {};
 
     // Auto-detect PR URL from parameter OR config
@@ -140,7 +142,7 @@ export class BitbucketService {
     const prTitle = title || GitParser.generatePRTitle(sourceBranch, ticketId, commitSummary);
 
     const categorizedFiles = ModuleClassifier.classify(changedFiles, config.module_rules);
-    const fileHighlights = ASTExtractor.extractHighlights(changedFiles, rawDiff);
+    const fileHighlights = ASTExtractor.extractHighlights(changedFiles, rawDiff, lang);
 
     const changesByModule: CategorizedModule[] = [];
 
@@ -154,7 +156,7 @@ export class BitbucketService {
 
       const highlights = Array.from(highlightsSet);
       if (highlights.length === 0) {
-        highlights.push(`Cập nhật và tối ưu hóa các file thuộc module ${moduleName}`);
+        highlights.push(I18n.getModuleFallbackHighlight(moduleName, lang));
       }
 
       changesByModule.push({

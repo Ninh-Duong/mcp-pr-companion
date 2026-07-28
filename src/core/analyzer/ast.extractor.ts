@@ -1,5 +1,7 @@
+import { I18n, Language } from '../../utils/i18n.js';
+
 export class ASTExtractor {
-  static extractHighlights(files: string[], rawDiff: string): Record<string, string[]> {
+  static extractHighlights(files: string[], rawDiff: string, lang: Language = 'vi'): Record<string, string[]> {
     const highlightsByModule: Record<string, string[]> = {};
 
     if (!rawDiff) return highlightsByModule;
@@ -20,7 +22,7 @@ export class ASTExtractor {
       if (content.match(/class\s+(\w+)|table\s+(\w+)|interface\s+(\w+)/i)) {
         const match = content.match(/(?:class|table|interface)\s+(\w+)/i);
         if (match) {
-          this.addHighlight(highlightsByModule, currentFile, `Bổ sung / cập nhật cấu trúc: ${match[1]}`);
+          this.addHighlight(highlightsByModule, currentFile, I18n.getStructureHighlight(match[1], lang));
         }
       }
 
@@ -30,7 +32,7 @@ export class ASTExtractor {
         if (match) {
           const method = match[1].replace('Http', '').toUpperCase();
           const route = match[2] || '';
-          this.addHighlight(highlightsByModule, currentFile, `Bổ sung API Endpoint: ${method} ${route}`);
+          this.addHighlight(highlightsByModule, currentFile, I18n.getApiEndpointHighlight(method, route, lang));
         }
       }
 
@@ -38,7 +40,7 @@ export class ASTExtractor {
       if (content.match(/rpc\s+(\w+)\s*\(/i)) {
         const match = content.match(/rpc\s+(\w+)\s*\(/i);
         if (match) {
-          this.addHighlight(highlightsByModule, currentFile, `Bổ sung gRPC method: rpc ${match[1]}`);
+          this.addHighlight(highlightsByModule, currentFile, I18n.getGrpcHighlight(match[1], lang));
         }
       }
     }
