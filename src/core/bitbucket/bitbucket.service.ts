@@ -26,7 +26,9 @@ export class BitbucketService {
 
     const parsed = this.parsePRUrl(prUrl);
     if (!parsed) {
-      throw new Error(`Invalid Bitbucket PR URL format: ${prUrl}. Expected: https://bitbucket.org/{workspace}/{repo}/pull-requests/{id}`);
+      const errMsg = `❌ [URL ERROR] Invalid Bitbucket PR URL format: "${prUrl}".\n👉 Expected format: https://bitbucket.org/{workspace}/{repo}/pull-requests/{id}`;
+      Logger.error(errMsg);
+      throw new Error(errMsg);
     }
 
     const config = ConfigLoader.load();
@@ -36,11 +38,28 @@ export class BitbucketService {
     const repoSlug = parsed.repoSlug;
     const prId = parsed.prId;
 
-    const username = bbConfig.username;
-    const appPassword = bbConfig.app_password;
+    const username = bbConfig.username?.trim();
+    const appPassword = bbConfig.app_password?.trim();
 
-    if (!username || !appPassword) {
-      throw new Error('Bitbucket credentials (username or app_password) missing in config.json. Please update config.json.');
+    // Check for missing or placeholder credentials
+    if (!username || !appPassword || appPassword.includes('YOUR_BITBUCKET') || username.includes('your_email')) {
+      const configErrMsg = [
+        '========================================================================',
+        '❌ [CONFIG ERROR] Missing or default Bitbucket credentials in config.json!',
+        '========================================================================',
+        '👉 Please open config.json and fill in your actual Bitbucket credentials:',
+        '   {',
+        '     "bitbucket": {',
+        '       "username": "your_actual_email@company.com",',
+        '       "app_password": "YOUR_ACTUAL_APP_PASSWORD"',
+        '     }',
+        '   }',
+        '📌 Required Token Scopes on Bitbucket: pullrequest:read & repository:read',
+        '========================================================================'
+      ].join('\n');
+
+      Logger.error(configErrMsg);
+      throw new Error('Bitbucket credentials (username or app_password) missing or using default placeholders in config.json. Please update config.json.');
     }
 
     const authHeader = 'Basic ' + Buffer.from(`${username}:${appPassword}`).toString('base64');
@@ -54,7 +73,9 @@ export class BitbucketService {
     const prRes = await fetch(`https://api.bitbucket.org/2.0/repositories/${workspace}/${repoSlug}/pullrequests/${prId}`, { headers });
     if (!prRes.ok) {
       const errText = await prRes.text();
-      throw new Error(`Bitbucket API error (${prRes.status}): ${errText}`);
+      const apiErrMsg = `❌ [API ERROR] Bitbucket API returned status ${prRes.status}: ${errText}.\n👉 Please verify your username, app_password token, and repository permissions.`;
+      Logger.error(apiErrMsg);
+      throw new Error(apiErrMsg);
     }
     const prData: any = await prRes.json();
 
