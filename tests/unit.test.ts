@@ -41,6 +41,13 @@ async function runTests() {
   assert(parsed.workspace === 'myworkspace' && parsed.repoSlug === 'myrepo' && parsed.prId === 4158, 'parseAndValidateUrl extracts workspace, repo, and prId');
   assert(parsed.canonicalUrl === 'https://bitbucket.org/myworkspace/myrepo/pull-requests/4158', 'parseAndValidateUrl produces canonicalized HTTPS URL');
 
+  const dotRepoUrl = 'https://bitbucket.org/siliconstack/wec.be/pull-requests/4565';
+  const dotParsed = PRRegistry.parseAndValidateUrl(dotRepoUrl);
+  assert(dotParsed.repoSlug === 'wec.be' && dotParsed.prId === 4565, 'parseAndValidateUrl accepts repository names containing dots (wec.be)');
+
+  const dynamicBuilt = PRRegistry.buildPRUrl('siliconstack', 'wec.be', 4565);
+  assert(dynamicBuilt === 'https://bitbucket.org/siliconstack/wec.be/pull-requests/4565', 'buildPRUrl dynamically constructs canonical URL from Workspace, Repo, and PR ID');
+
   let invalidThrown = false;
   try {
     PRRegistry.parseAndValidateUrl('http://bitbucket.org/ws/repo/pull-requests/123');
@@ -67,10 +74,16 @@ async function runTests() {
   assert(!writeRes.allowed, 'CapabilityGuard blocks write actions when WriteProfile is disabled');
 
   // 4. ConfigManager Tests
-  console.log('\n4. ConfigManager Profile Isolation:');
+  console.log('\n4. ConfigManager Profile Isolation & Sanitization:');
   const base = ConfigManager.loadBase();
   assert(base.schema_version === 2, 'ConfigManager loads BaseConfig with schema_version 2');
   assert(base.sync.concurrency >= 1, 'ConfigManager loads sync concurrency setting');
+
+  const s1 = ConfigManager.sanitizeWorkspaceSlug('https://bitbucket.org/siliconstack/wec.be/pull-requests/4565');
+  assert(s1.slug === 'siliconstack' && s1.extractedFromUrl, 'sanitizeWorkspaceSlug extracts slug from full Bitbucket PR URL');
+
+  const s2 = ConfigManager.sanitizeWorkspaceSlug('  siliconstack  ');
+  assert(s2.slug === 'siliconstack' && !s2.extractedFromUrl, 'sanitizeWorkspaceSlug cleans whitespace from plain slug');
 
   // 5. CacheIndex & DataStore Tests
   console.log('\n5. DataStore & CacheIndex Keys:');

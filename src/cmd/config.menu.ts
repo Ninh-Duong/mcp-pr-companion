@@ -47,12 +47,19 @@ export class ConfigMenu {
 
   private static async editBaseSettings(): Promise<void> {
     const current = ConfigManager.loadBase();
-    const workspace = await input({
-      message: 'Bitbucket Workspace slug:',
-      default: current.workspace
+    console.log('\n📌 HD: Workspace Slug chỉ chứa tên slug (ví dụ: "siliconstack"). KHÔNG dán cả URL!');
+    const workspaceInput = await input({
+      message: 'Bitbucket Workspace Slug (e.g. "siliconstack"):',
+      default: current.workspace || 'siliconstack'
     });
+
+    const sanitized = ConfigManager.sanitizeWorkspaceSlug(workspaceInput);
+    if (sanitized.extractedFromUrl) {
+      console.log(`⚠️  [CẢNH BÁO FORMAT] Phát hiện bạn vừa dán full URL! Hệ thống đã tự động trích xuất Workspace Slug: "${sanitized.slug}"`);
+    }
+
     const output_language = await select({
-      message: 'Output Language for AI Payload:',
+      message: 'Output Language cho AI Payload:',
       choices: [
         { name: 'Vietnamese (vi)', value: 'vi' as const },
         { name: 'English (en)', value: 'en' as const },
@@ -61,12 +68,12 @@ export class ConfigMenu {
       default: current.output_language
     });
     const concurrencyStr = await input({
-      message: 'Max Concurrent Sync Jobs:',
+      message: 'Max Concurrent Sync Jobs (e.g. 2):',
       default: String(current.sync.concurrency)
     });
 
     ConfigManager.saveBase({
-      workspace: workspace.trim(),
+      workspace: sanitized.slug,
       output_language,
       sync: {
         ...current.sync,
@@ -74,7 +81,7 @@ export class ConfigMenu {
       }
     });
 
-    console.log('✅ Base settings saved successfully!\n');
+    console.log(`✅ Base settings saved! Workspace Slug: "${sanitized.slug}"\n`);
   }
 
   private static async configureReadToken(): Promise<void> {
@@ -82,12 +89,18 @@ export class ConfigMenu {
     console.log(`\nCurrent Read Config -> Email: ${summary.email}, Read Token: ${summary.readToken}`);
 
     const email = await input({
-      message: 'Enter Bitbucket Email:',
-      default: summary.email !== 'Not configured' ? summary.email : ''
+      message: 'Enter Bitbucket Email (e.g. "user@company.com"):',
+      default: summary.email !== 'Not configured' ? summary.email : '',
+      validate: (val) => {
+        if (!val || !val.includes('@')) {
+          return '❌ Email không hợp lệ! Vui lòng nhập định dạng email chuẩn (ví dụ: dev@company.com)';
+        }
+        return true;
+      }
     });
 
     const readToken = await password({
-      message: 'Enter Bitbucket Read API Token (masked input):',
+      message: 'Enter Bitbucket Read API Token (e.g. "ATBB..."):',
       mask: '*'
     });
 

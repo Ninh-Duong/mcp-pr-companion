@@ -1,5 +1,6 @@
 import { select, input, confirm } from '@inquirer/prompts';
 import { PRRegistry } from '../core/registry/pr.registry.js';
+import { ConfigManager } from '../config/config.manager.js';
 
 export class PRListMenu {
   static async show(): Promise<void> {
@@ -64,14 +65,73 @@ export class PRListMenu {
   }
 
   private static async addPR(): Promise<void> {
-    const urlInput = await input({
-      message: 'Enter Bitbucket PR URL (e.g. https://bitbucket.org/workspace/repo/pull-requests/123):'
+    const mode = await select({
+      message: '➕ Choose PR Entry Mode:',
+      choices: [
+        { name: '1. Dynamic Step-by-Step (Repo Slug + PR ID)', value: 'dynamic' },
+        { name: '2. Paste Full Bitbucket PR URL', value: 'full_url' }
+      ]
     });
 
-    if (!urlInput || !urlInput.trim()) return;
+    let targetUrl = '';
+
+    if (mode === 'dynamic') {
+      const baseConfig = ConfigManager.loadBase();
+      let workspace = baseConfig.workspace;
+
+      if (!workspace) {
+        workspace = await input({
+          message: 'Enter Bitbucket Workspace Slug (e.g. "siliconstack"):',
+          validate: (val) => val && val.trim() ? true : '❌ Workspace Slug không được để trống!'
+        });
+        workspace = ConfigManager.sanitizeWorkspaceSlug(workspace).slug;
+      }
+
+      console.log(`\n🏢 Active Workspace: "${workspace}"`);
+
+      const repoSlug = await input({
+        message: 'Enter Repository Name / Slug (e.g. "wec.be"):',
+        validate: (val) => {
+          if (!val || !val.trim()) return '❌ Repository Slug không được để trống!';
+          if (!/^[a-zA-Z0-9_\-\.]+$/.test(val.trim())) {
+            return '❌ Tên repo chỉ được chứa chữ cái, chữ số, dấu gạch ngang (-), gạch dưới (_) hoặc dấu chấm (.)';
+          }
+          return true;
+        }
+      });
+
+      const prIdStr = await input({
+        message: 'Enter PR ID number (e.g. 4565):',
+        validate: (val) => {
+          const num = parseInt(val.trim().replace(/^#/, ''), 10);
+          if (isNaN(num) || num <= 0) return '❌ PR ID phải là số nguyên dương (ví dụ: 4565)';
+          return true;
+        }
+      });
+
+      targetUrl = PRRegistry.buildPRUrl(workspace, repoSlug, prIdStr);
+      console.log(`\n🔗 Dynamic Mapping generated PR URL: ${targetUrl}`);
+    } else {
+      targetUrl = await input({
+        message: 'Enter Full Bitbucket PR URL (e.g. "https://bitbucket.org/siliconstack/wec.be/pull-requests/4565"):',
+        validate: (val) => {
+          if (!val || !val.trim()) {
+            return '❌ Vui lòng nhập link PR URL!';
+          }
+          try {
+            PRRegistry.parseAndValidateUrl(val.trim());
+            return true;
+          } catch (err: any) {
+            return `❌ [SAI FORMAT] ${err.message}\n👉 Ví dụ chuẩn: https://bitbucket.org/{workspace}/{repo}/pull-requests/{id}`;
+          }
+        }
+      });
+    }
+
+    if (!targetUrl || !targetUrl.trim()) return;
 
     try {
-      const res = PRRegistry.add(urlInput.trim());
+      const res = PRRegistry.add(targetUrl.trim());
       if (res.success) {
         console.log(`✅ ${res.message}\n`);
       } else {

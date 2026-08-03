@@ -15,6 +15,38 @@ export class ConfigManager {
 
   private static profileCache = new Map<string, any>();
 
+  /**
+   * Cleans workspace slug input, extracting slug if user pasted a full URL.
+   */
+  static sanitizeWorkspaceSlug(inputStr: string): { slug: string; extractedFromUrl: boolean } {
+    if (!inputStr || typeof inputStr !== 'string') {
+      return { slug: '', extractedFromUrl: false };
+    }
+
+    const trimmed = inputStr.trim();
+    if (trimmed.includes('bitbucket.org') || trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      try {
+        const urlStr = trimmed.startsWith('http') ? trimmed : `https://${trimmed}`;
+        const parsed = new URL(urlStr);
+        const pathSegments = parsed.pathname.split('/').filter(Boolean);
+        if (pathSegments.length > 0) {
+          return { slug: pathSegments[0].toLowerCase(), extractedFromUrl: true };
+        }
+      } catch {
+        // Fallback to regex extraction
+      }
+
+      const match = trimmed.match(/bitbucket\.org\/([^\/]+)/i);
+      if (match) {
+        return { slug: match[1].toLowerCase(), extractedFromUrl: true };
+      }
+    }
+
+    // Standard slug cleaning: remove leading/trailing slashes
+    const cleanSlug = trimmed.replace(/^\/+|\/+$/g, '').toLowerCase();
+    return { slug: cleanSlug, extractedFromUrl: false };
+  }
+
   static ensureDirs(): void {
     if (!fs.existsSync(this.configDir)) {
       fs.mkdirSync(this.configDir, { recursive: true });
@@ -77,6 +109,10 @@ export class ConfigManager {
   static saveBase(config: Partial<BaseConfig>): BaseConfig {
     this.ensureDirs();
     const current = this.loadBase();
+    if (config.workspace !== undefined) {
+      const { slug } = this.sanitizeWorkspaceSlug(config.workspace);
+      config.workspace = slug;
+    }
     const merged = BaseConfigSchema.parse({ ...current, ...config });
     fs.writeFileSync(this.baseFile, JSON.stringify(merged, null, 2), 'utf-8');
     this.profileCache.set('base', merged);
@@ -195,7 +231,18 @@ export class ConfigManager {
         return { success: true, message: `Successfully authenticated with Bitbucket API (${res.status} OK).` };
       } else {
         const text = await res.text();
-        return { success: false, message: `Bitbucket API returned status ${res.status}: ${res.statusText}` };
+        let hint = '';
+        if (res.status === 404) {
+          hint = base.workspace
+            ? `\n👉 Nguyên nhân có thể:\n   1. Workspace Slug "${base.workspace}" bị gõ sai hoặc chứa full URL thay vì slug thuần.\n   2. Token không có quyền truy cập Workspace private này (Bitbucket trả về 404 để giấu tài nguyên).`
+            : '\n👉 Nguyên nhân: User endpoint không khả dụng với Token này.';
+        } else if (res.status === 401) {
+          hint = '\n👉 Nguyên nhân: Token hoặc Email không chính xác/hết hạn.';
+        } else if (res.status === 403) {
+          hint = '\n👉 Nguyên nhân: Token thiếu scope "read:repository:bitbucket" hoặc "read:pullrequest:bitbucket".';
+        }
+
+        return { success: false, message: `Bitbucket API returned status ${res.status}: ${res.statusText}.${hint}` };
       }
     } catch (err: any) {
       return { success: false, message: `Network error connecting to Bitbucket: ${err.message || String(err)}` };
