@@ -60,9 +60,9 @@ export class PRRegistry {
     const repoSlug = match[2];
     const prId = parseInt(match[3], 10);
 
-    const slugRegex = /^[a-zA-Z0-9_-]+$/;
+    const slugRegex = /^[a-zA-Z0-9_\-\.]+$/;
     if (!slugRegex.test(workspace) || !slugRegex.test(repoSlug)) {
-      throw new Error(`Invalid workspace or repository name in PR URL. Slugs must contain only letters, numbers, hyphens, or underscores.`);
+      throw new Error(`Invalid workspace or repository name in PR URL. Slugs must contain only letters, numbers, hyphens, underscores, or dots.`);
     }
 
     if (isNaN(prId) || prId <= 0) {
@@ -78,6 +78,14 @@ export class PRRegistry {
       prId,
       canonicalUrl
     };
+  }
+
+  static buildPRUrl(workspace: string, repoSlug: string, prId: number | string): string {
+    const cleanWs = workspace.trim().replace(/^\/+|\/+$/g, '').toLowerCase();
+    const cleanRepo = repoSlug.trim().replace(/^\/+|\/+$/g, '').toLowerCase();
+    const cleanId = String(prId).trim().replace(/^#/, '');
+
+    return `https://bitbucket.org/${cleanWs}/${cleanRepo}/pull-requests/${cleanId}`;
   }
 
   static list(): string[] {
