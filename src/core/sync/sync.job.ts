@@ -68,7 +68,8 @@ export class SyncJob {
     if (!this.options.forceRefresh) {
       const active = DataStore.getActiveRevision(parsed.workspace, parsed.repoSlug, parsed.prId);
       if (active && active.current.source_hash === rawRev.sourceHash && active.current.status === 'complete') {
-        emit('complete', 100, 'Complete (cache hit)', undefined, ticketId);
+        DataStore.exportRawToOutput(parsed.workspace, parsed.repoSlug, parsed.prId, rawRev, ticketId);
+        emit('complete', 100, 'Complete (cache hit & exported to output/)', undefined, ticketId);
         return { status: 'cached', ticketId, sourceHash: rawRev.sourceHash };
       }
     }
@@ -78,8 +79,8 @@ export class SyncJob {
     emit('downloading_diff', 60, 'Downloading diff', undefined, ticketId);
     emit('analyzing', 75, 'Analyzing changed files', undefined, ticketId);
 
-    // Persist data
-    emit('persisting', 95, 'Persisting local cache data', undefined, ticketId);
+    // Persist data & export to output/
+    emit('persisting', 95, 'Persisting cache & exporting raw data to output/', undefined, ticketId);
     DataStore.saveRevision(parsed.workspace, parsed.repoSlug, parsed.prId, rawRev);
 
     // Retention Cleanup

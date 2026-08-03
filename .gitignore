@@ -10,6 +10,7 @@ config.local.json
 # Temporary Data & Output Dumps
 output/
 temp/
+Logs/
 *.log
 
 # Dependencies & Build Outputs

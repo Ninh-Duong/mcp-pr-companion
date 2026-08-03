@@ -1,13 +1,15 @@
 import { z } from 'zod';
+import { PrivacyConfigSchema } from './privacy.config.js';
 
 export const BaseConfigSchema = z.object({
-  schema_version: z.number().default(2),
+  schema_version: z.number().default(3),
   provider: z.string().default('bitbucket-cloud'),
   workspace: z.string().default(''),
   output_language: z.enum(['vi', 'en', 'bilingual']).default('vi'),
   ticket_prefix: z.array(z.string()).default(['WCE-', 'PROJ-', 'JIRA-']),
   default_target_branch: z.string().default('main'),
   default_pr_url: z.string().default(''),
+  privacy: PrivacyConfigSchema,
   sync: z.object({
     concurrency: z.number().default(2),
     request_timeout_ms: z.number().default(30000),

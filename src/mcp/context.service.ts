@@ -1,16 +1,16 @@
-import { DataStore, PRManifest, PRFileDetail } from '../core/storage/data.store.js';
+import { DataStore } from '../core/storage/data.store.js';
 import { PRRegistry } from '../core/registry/pr.registry.js';
 import { BitbucketCollector } from '../core/bitbucket/bitbucket.collector.js';
-import { SyncManager } from '../core/sync/sync.manager.js';
-import { ConfigManager } from '../config/config.manager.js';
+import { PRManifestV3 } from '../core/privacy/manifest.v3.schema.js';
+import { PRFileDetailV3 } from '../core/privacy/file_detail.v3.schema.js';
 
 export class PRContextService {
-  private static manifestCache = new Map<string, { manifest: PRManifest; timestamp: number }>();
-  private static fileDetailCache = new Map<string, { detail: PRFileDetail; timestamp: number }>();
+  private static manifestCache = new Map<string, { manifest: PRManifestV3; timestamp: number }>();
+  private static fileDetailCache = new Map<string, { detail: PRFileDetailV3; timestamp: number }>();
 
   private static maxCacheEntries = 20;
 
-  static async getManifest(prUrl: string, refresh = false): Promise<PRManifest> {
+  static async getManifest(prUrl: string, refresh = false): Promise<PRManifestV3> {
     const parsed = PRRegistry.parseAndValidateUrl(prUrl);
     const prDirKey = `${parsed.workspace}:${parsed.repoSlug}:${parsed.prId}`;
 
@@ -37,7 +37,7 @@ export class PRContextService {
     return result.manifest;
   }
 
-  static async getFileDetail(prUrl: string, fileId: number): Promise<PRFileDetail | null> {
+  static async getFileDetail(prUrl: string, fileId: string | number): Promise<PRFileDetailV3 | null> {
     const parsed = PRRegistry.parseAndValidateUrl(prUrl);
     const detailKey = `${parsed.workspace}:${parsed.repoSlug}:${parsed.prId}:${fileId}`;
 
@@ -71,11 +71,11 @@ export class PRContextService {
     return { synced: false };
   }
 
-  static async refreshPRData(prUrl: string): Promise<PRManifest> {
+  static async refreshPRData(prUrl: string): Promise<PRManifestV3> {
     return this.getManifest(prUrl, true);
   }
 
-  private static setManifestCache(key: string, manifest: PRManifest): void {
+  private static setManifestCache(key: string, manifest: PRManifestV3): void {
     if (this.manifestCache.size >= this.maxCacheEntries) {
       const firstKey = this.manifestCache.keys().next().value;
       if (firstKey) this.manifestCache.delete(firstKey);
@@ -83,7 +83,7 @@ export class PRContextService {
     this.manifestCache.set(key, { manifest, timestamp: Date.now() });
   }
 
-  private static setFileDetailCache(key: string, detail: PRFileDetail): void {
+  private static setFileDetailCache(key: string, detail: PRFileDetailV3): void {
     if (this.fileDetailCache.size >= (this.maxCacheEntries * 10)) {
       const firstKey = this.fileDetailCache.keys().next().value;
       if (firstKey) this.fileDetailCache.delete(firstKey);
