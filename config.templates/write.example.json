@@ -1,0 +1,18 @@
+{
+  "enabled": false,
+  "auth": {
+    "type": "api_token",
+    "email_env": "BITBUCKET_EMAIL",
+    "token_env": "BITBUCKET_WRITE_TOKEN"
+  },
+  "allow": [
+    "pr.comment"
+  ],
+  "deny": [
+    "pr.approve",
+    "pr.decline",
+    "pr.merge",
+    "repository.push"
+  ],
+  "require_confirmation": true
+}

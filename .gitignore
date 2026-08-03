@@ -1,6 +1,7 @@
 # Sensitive Config & Tokens (CRITICAL - DO NOT COMMIT)
 config.json
 config.local.json
+.mcp-pr-companion/
 *.env
 *.env.local
 *.pem

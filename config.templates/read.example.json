@@ -1,0 +1,11 @@
+{
+  "auth": {
+    "type": "api_token",
+    "email_env": "BITBUCKET_EMAIL",
+    "token_env": "BITBUCKET_READ_TOKEN"
+  },
+  "capabilities": [
+    "pr.read",
+    "repository.read"
+  ]
+}
