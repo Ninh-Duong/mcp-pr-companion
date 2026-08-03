@@ -1,4 +1,4 @@
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { Logger } from '../../utils/logger.js';
 
 export interface GitDiffStat {
@@ -12,7 +12,7 @@ export class GitExecutor {
 
   getCurrentBranch(): string {
     try {
-      return this.runGit('git rev-parse --abbrev-ref HEAD');
+      return this.runGit(['rev-parse', '--abbrev-ref', 'HEAD']);
     } catch (err) {
       Logger.error('Failed to get current git branch', err);
       return '';
@@ -21,7 +21,7 @@ export class GitExecutor {
 
   getAuthorName(): string {
     try {
-      return this.runGit('git config user.email') || this.runGit('git config user.name');
+      return this.runGit(['config', 'user.email']) || this.runGit(['config', 'user.name']);
     } catch (err) {
       return '';
     }
@@ -29,7 +29,7 @@ export class GitExecutor {
 
   getCommits(sourceBranch: string, targetBranch: string): string[] {
     try {
-      const rawCommits = this.runGit(`git log ${targetBranch}..${sourceBranch} --no-merges --pretty=format:"%s"`);
+      const rawCommits = this.runGit(['log', `${targetBranch}..${sourceBranch}`, '--no-merges', '--pretty=format:%s']);
       if (!rawCommits) return [];
       return rawCommits.split('\n').map(c => c.trim()).filter(Boolean);
     } catch (err) {
@@ -40,7 +40,7 @@ export class GitExecutor {
 
   getDiffStat(sourceBranch: string, targetBranch: string): GitDiffStat {
     try {
-      const rawStat = this.runGit(`git diff ${targetBranch}..${sourceBranch} --shortstat`);
+      const rawStat = this.runGit(['diff', `${targetBranch}..${sourceBranch}`, '--shortstat']);
       if (!rawStat) return { totalFilesChanged: 0, totalAdditions: 0, totalDeletions: 0 };
 
       // Example output: "12 files changed, 450 insertions(+), 60 deletions(-)"
@@ -61,7 +61,7 @@ export class GitExecutor {
 
   getChangedFiles(sourceBranch: string, targetBranch: string): string[] {
     try {
-      const rawFiles = this.runGit(`git diff ${targetBranch}..${sourceBranch} --name-only`);
+      const rawFiles = this.runGit(['diff', `${targetBranch}..${sourceBranch}`, '--name-only']);
       if (!rawFiles) return [];
       return rawFiles.split('\n').map(f => f.trim()).filter(Boolean);
     } catch (err) {
@@ -72,14 +72,15 @@ export class GitExecutor {
 
   getRawDiff(sourceBranch: string, targetBranch: string): string {
     try {
-      return this.runGit(`git diff ${targetBranch}..${sourceBranch} --unified=3`);
+      return this.runGit(['diff', `${targetBranch}..${sourceBranch}`, '--unified=3']);
     } catch (err) {
       Logger.warn('Failed to fetch raw diff', err);
       return '';
     }
   }
 
-  private runGit(cmd: string): string {
-    return execSync(cmd, { cwd: this.repoPath, encoding: 'utf-8' }).trim();
+  private runGit(args: string[]): string {
+    return execFileSync('git', args, { cwd: this.repoPath, encoding: 'utf-8' }).trim();
   }
 }
+

@@ -7,7 +7,6 @@ import { GitExecutor } from '../git/git.executor.js';
 import { GitParser } from '../git/git.parser.js';
 import { BitbucketService } from '../bitbucket/bitbucket.service.js';
 import { Logger } from '../../utils/logger.js';
-import { I18n } from '../../utils/i18n.js';
 
 export interface PRPayloadOptions {
   prUrl?: string;
@@ -19,8 +18,7 @@ export interface PRPayloadOptions {
 export class PayloadBuilder {
   static async build(options: PRPayloadOptions = {}) {
     const config = ConfigLoader.load();
-    const lang = config.output_language || 'vi';
-    let payload: any;
+    let rawPayloadData: any;
     let identifier = 'local';
 
     const effectivePrUrl = options.prUrl || config.default_pr_url || config.bitbucket?.default_pr_url || 
@@ -32,12 +30,12 @@ export class PayloadBuilder {
       if (parsed) {
         identifier = `pr_${parsed.prId}`;
       }
-      payload = await BitbucketService.fetchPRPayload(effectivePrUrl);
-      if (payload.pr_info?.ticket_id && payload.pr_info.ticket_id !== 'N/A') {
-        identifier = `${payload.pr_info.ticket_id}_pr_${parsed?.prId || 'bb'}`;
+      rawPayloadData = await BitbucketService.fetchPRPayload(effectivePrUrl);
+      if (rawPayloadData.pr_info?.ticket_id && rawPayloadData.pr_info.ticket_id !== 'N/A') {
+        identifier = `${rawPayloadData.pr_info.ticket_id}_pr_${parsed?.prId || 'bb'}`;
       }
     } else {
-      // Otherwise, fall back to local Git diff execution
+      // Local Git diff execution
       Logger.info(`[STEP 1/5] 💻 Initializing Local Git Repository analysis...`);
       const repoPath = options.repoPath || process.cwd();
       const git = new GitExecutor(repoPath);
@@ -68,7 +66,7 @@ export class PayloadBuilder {
       }
 
       const categorizedFiles = ModuleClassifier.classify(changedFiles, config.module_rules);
-      const fileHighlights = ASTExtractor.extractHighlights(changedFiles, rawDiff, lang);
+      const fileHighlights = ASTExtractor.extractHighlights(changedFiles, rawDiff);
 
       const changesByModule: CategorizedModule[] = [];
 
@@ -80,9 +78,9 @@ export class PayloadBuilder {
           }
         }
 
-        const highlights = Array.from(highlightsSet);
+        let highlights = Array.from(highlightsSet);
         if (highlights.length === 0) {
-          highlights.push(I18n.getModuleFallbackHighlight(moduleName, lang));
+          highlights = this.generateSmartFallbackHighlights(moduleName, files);
         }
 
         changesByModule.push({
@@ -92,7 +90,7 @@ export class PayloadBuilder {
         });
       }
 
-      payload = {
+      rawPayloadData = {
         pr_info: {
           ticket_id: ticketId,
           title,
@@ -100,7 +98,7 @@ export class PayloadBuilder {
           target_branch: targetBranch,
           author
         },
-        commit_summary: commits.length > 0 ? commits : [I18n.getCommitSummaryFallback(lang)],
+        commit_summary: commits.length > 0 ? commits : ['Cập nhật nguồn mã nguồn'],
         diff_stat: {
           total_files_changed: diffStat.totalFilesChanged,
           total_additions: diffStat.totalAdditions,
@@ -110,15 +108,101 @@ export class PayloadBuilder {
       };
     }
 
+    // Enhance payload with Deployment/Migration Notes & Key Technical Insights
+    const enhancedPayload = this.enrichPayloadData(rawPayloadData);
+
     // Save JSON output copy to ./output/ folder with timestamp
-    const savedPath = this.savePayloadToFile(payload, identifier);
-    payload._metadata = {
+    const savedPath = this.savePayloadToFile(enhancedPayload, identifier);
+    enhancedPayload._metadata = {
       saved_file_path: savedPath,
       generated_at: new Date().toISOString()
     };
 
-    Logger.info(`✅ [SUCCESS] Payload generated and saved to: ${savedPath}`);
-    return payload;
+    Logger.info(`✅ [SUCCESS] Rich Payload generated and saved to: ${savedPath}`);
+    return enhancedPayload;
+  }
+
+  private static generateSmartFallbackHighlights(moduleName: string, files: string[]): string[] {
+    const highlights: string[] = [];
+    const sampleFiles = files.slice(0, 3).join(', ');
+
+    if (moduleName.includes('Database')) {
+      highlights.push(`Cập nhật cấu hình DbContext / Schema Migration liên quan đến: ${sampleFiles}`);
+    } else if (moduleName.includes('APIs')) {
+      highlights.push(`Thêm mới / Cập nhật Controller và các API Endpoints trong: ${sampleFiles}`);
+    } else if (moduleName.includes('Services')) {
+      highlights.push(`Triển khai Business Logic, DTO Request/Response và Services: ${sampleFiles}`);
+    } else if (moduleName.includes('gRPC')) {
+      highlights.push(`Cập nhật Proto schema và gRPC Client/Service integration: ${sampleFiles}`);
+    } else if (moduleName.includes('Tests')) {
+      highlights.push(`Bổ sung Unit Tests & Helper Extensions trong: ${sampleFiles}`);
+    } else {
+      highlights.push(`Cập nhật các file cấu hình và tài nguyên: ${sampleFiles}`);
+    }
+
+    return highlights;
+  }
+
+  private static enrichPayloadData(payload: any): any {
+    const allFiles: string[] = [];
+    const deploymentNotes: string[] = [];
+    const keyComponents: string[] = [];
+
+    (payload.changes_by_module || []).forEach((mod: any) => {
+      (mod.files || []).forEach((f: string) => {
+        allFiles.push(f);
+        if (f.endsWith('.cs') && (f.includes('Migration') || f.includes('Add_Table') || f.includes('Add_Column'))) {
+          const migrationName = f.replace('.cs', '');
+          if (!deploymentNotes.includes(`Cần chạy EF Database Migration: ${migrationName}`)) {
+            deploymentNotes.push(`Cần chạy EF Database Migration: ${migrationName}`);
+          }
+        }
+        if (f.endsWith('.sql')) {
+          deploymentNotes.push(`Cần thực thi SQL Migration Script: ${f}`);
+        }
+        if (f.endsWith('.proto')) {
+          deploymentNotes.push(`Có thay đổi contract gRPC Proto (${f}), cần re-generate gRPC Client/Server code.`);
+        }
+        if (f.includes('appsettings') || f.endsWith('.env')) {
+          deploymentNotes.push(`Cấu hình môi trường bị thay đổi ở ${f}, cần kiểm tra App Settings/Env Keys.`);
+        }
+        if (f.includes('Controller') || f.includes('Service') || f.includes('Repository')) {
+          if (keyComponents.length < 10) {
+            keyComponents.push(f);
+          }
+        }
+      });
+    });
+
+    // Synthesize top technical summary insights
+    const summaryInsights: string[] = [];
+    (payload.changes_by_module || []).forEach((mod: any) => {
+      if (mod.highlights && mod.highlights.length > 0) {
+        mod.highlights.forEach((h: string) => {
+          if (!h.startsWith('Cập nhật các file') && summaryInsights.length < 8) {
+            summaryInsights.push(`[${mod.module}] ${h}`);
+          }
+        });
+      }
+    });
+
+    if (summaryInsights.length === 0 && payload.commit_summary && payload.commit_summary.length > 0) {
+      payload.commit_summary.slice(0, 5).forEach((c: string) => {
+        if (!c.startsWith('Merge branch')) {
+          summaryInsights.push(c);
+        }
+      });
+    }
+
+    return {
+      pr_info: payload.pr_info,
+      commit_summary: payload.commit_summary,
+      diff_stat: payload.diff_stat,
+      summary_insights: summaryInsights.length > 0 ? summaryInsights : ['Cập nhật và tối ưu hóa tính năng'],
+      deployment_and_migration_notes: deploymentNotes.length > 0 ? deploymentNotes : ['Không có yêu cầu migration đặc biệt'],
+      key_impacted_components: keyComponents,
+      changes_by_module: payload.changes_by_module
+    };
   }
 
   private static savePayloadToFile(payload: any, identifier: string): string {

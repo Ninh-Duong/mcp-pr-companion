@@ -1,178 +1,136 @@
-# 🚀 mcp-pr-companion
+# 🚀 mcp-pr-companion (v2.0 Architecture)
 
-`mcp-pr-companion` is a **Local Model Context Protocol (MCP) Server** and **Standalone CLI Tool** designed to run offline on developer workstations or connect directly to Bitbucket Cloud REST API.
+`mcp-pr-companion` is a dual-interface system combining a **Terminal UI (`npm run cmd`)** and a **Local Model Context Protocol (MCP) Server** designed to pre-process Git Pull Request diffs into compact, agent-ready JSON payloads.
 
-It automatically parses Git diffs, commit histories, and code structures, categorizing changes into architectural layers (Database, API Controllers, Services, gRPC, Unit Tests) via AST/Regex extraction rules. It then packages the extracted data into a **compact JSON payload (~1-2KB)** tailored for AI PR description generation.
-
----
-
-## 🎯 Purpose & Key Benefits
-
-- **Dual-Mode Execution**: Works seamlessly as an **Automated MCP Server** (invoked by AI) OR as a **Standalone Terminal CLI** (run manually by developers).
-- **Token Optimization**: Reduces AI context token consumption by **80% - 90%** by eliminating raw diff dumps.
-- **Speed**: Accelerates PR description generation by **5x - 10x**.
-- **Privacy & Security**: Operates 100% locally or via secure read-only Bitbucket API. Raw git diffs remain on your machine; only sanitized JSON summary metadata is passed to the AI.
-- **Auto-Archiving Each Execution**: Every execution automatically saves a timestamped JSON snapshot to `./output/description_kb_{PR_ID}_{TIMESTAMP}.json` for historical tracking and easy AI retrieval.
+It unifies local Git branch analysis and Bitbucket Cloud REST API v2 integration into a shared core engine featuring **Async Multi-PR Sync**, **Deterministic Revision Caching**, **Scoped API Token Security**, and **Zero-Write Guardrails**.
 
 ---
 
-## 💻 Manual CLI Execution (Run Directly from Terminal)
+## 🏗️ Architectural Overview
 
-You can run `mcp-pr-companion` manually from your Terminal at any time!
-
-### 1. Generate via Bitbucket PR URL:
-```bash
-npm run generate -- --url https://bitbucket.org/workspace/repo/pull-requests/123
-```
-
-### 2. Generate via Local Git Branch Comparison:
-```bash
-npm run generate -- --source feature/WCE-815-staging --target main
-```
-
-### 3. Display Help & Options:
-```bash
-npm run generate -- --help
-```
-
----
-
-## 💾 Automatic JSON File Archiving (`./output/`)
-
-Every time `mcp-pr-companion` executes (via CLI or MCP Server), a unique JSON file is automatically written to `./output/`:
-
-- **Filename Pattern**: `description_kb_{ticketId_or_prId}_{timestamp}.json`
-- **Example File**: `./output/description_kb_WCE-815_pr_123_20260728_181235.json`
-
-> [!NOTE]
-> The `./output/` directory is **GIT IGNORED** via `.gitignore` to prevent any temporary data files from being committed to your source code repository.
-
----
-
-## 🔐 Bitbucket API Credentials & Token Setup Guide
-
-To fetch Pull Request data directly via Bitbucket PR URLs (`https://bitbucket.org/{workspace}/{repo}/pull-requests/{id}`), create a Bitbucket **App Password** with **Read-Only** permissions.
-
-### 🔑 How to Generate a Bitbucket App Password (Token):
-
-1. Log into [Bitbucket Cloud](https://bitbucket.org).
-2. Click your Avatar profile icon (Settings) -> Select **Personal settings**.
-3. In the left navigation menu under **Access Management**, click **App Passwords**.
-4. Click the **Create app password** button.
-5. Set a Label (e.g., `mcp-pr-companion`).
-6. **Check ONLY the following 2 Read permissions** for maximum security:
-   - ✅ **Pull requests**: `Read` (`pullrequest:read`)
-   - ✅ **Repositories**: `Read` (`repository:read`)
-7. Click **Create** and copy the generated App Password token.
-
----
-
-### ⚙️ Configuring `config.json`:
-Paste your Bitbucket username and the generated App Password token into `config.json` (which is `.gitignore` protected):
-
-```json
-{
-  "ticket_prefix": ["WCE-", "PROJ-", "JIRA-"],
-  "output_language": "vi",
-  "default_target_branch": "main",
-  "bitbucket": {
-    "workspace": "your-company-workspace",
-    "username": "your_email@company.com",
-    "app_password": "ATBBxxxxxxxxxxxxxxxxxxxxxxxx"
-  }
-}
-```
-
----
-
-## 📡 Real-Time Console Progress Logs
-
-During execution, `mcp-pr-companion` outputs detailed step-by-step progress logs to `stderr` so you can monitor execution status:
+Both the Terminal UI and MCP Server share a single underlying core subsystem:
 
 ```text
-[STEP 1/5] 🌐 Parsing Bitbucket PR URL: https://bitbucket.org/workspace/repo/pull-requests/123
-[STEP 2/5] 📋 Fetching PR Metadata for workspace/repo PR #123...
-  ✓ Found PR: "[WCE-815] Tiered Call Outcomes" (feature/WCE-815 -> main) by Ninh Duong
-[STEP 3/5] 📜 Fetching PR Commit History...
-  ✓ Retrieved 3 commits
-[STEP 4/5] 📊 Fetching PR Diffstat and Raw Code Diff...
-  ✓ Found 12 changed files (+450 / -60 lines)
-[STEP 5/5] 🧩 Classifying changed files into Modules & extracting Code Highlights...
-✅ [SUCCESS] Payload generated and saved to: ./output/description_kb_WCE-815_pr_123_20260728_181235.json
+┌─────────────────────────────────────────┐     ┌─────────────────────────────────────────┐
+│           Terminal UI (TUI)             │     │               MCP Server                │
+│             `npm run cmd`               │     │               `npm start`               │
+└────────────────────┬────────────────────┘     └────────────────────┬────────────────────┘
+                     │                                               │
+                     ▼                                               ▼
+         ┌───────────────────────┐                       ┌───────────────────────┐
+         │ Config & PR Registry  │                       │  PR Context Service   │
+         └───────────┬───────────┘                       │ (In-memory LRU Cache) │
+                     │                                   └───────────┬───────────┘
+                     ▼                                               │
+         ┌───────────────────────┐                                   │
+         │  Async Sync Manager   │                                   │
+         └───────────┬───────────┘                                   │
+                     │                                               │
+                     ▼                                               │
+         ┌───────────────────────────────────────────────────────────┴──────────┐
+         │                          Shared Core Engine                          │
+         │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐  │
+         │  │BitbucketCollector│  │  AST / Analyzer  │  │ Local DataStore  │  │
+         │  └──────────────────┘  └──────────────────┘  └──────────────────┘  │
+         └──────────────────────────────────┬───────────────────────────────────┘
+                                            │
+                                            ▼
+                             ┌──────────────────────────────┐
+                             │    .mcp-pr-companion/        │
+                             │  ├── config/                 │
+                             │  ├── secrets/credentials.env │
+                             │  ├── prs/links.json          │
+                             │  ├── data/bitbucket/         │
+                             │  ├── state/cache-index.json  │
+                             │  └── logs/                   │
+                             └──────────────────────────────┘
 ```
 
 ---
 
-## 📁 Repository Structure & Security Guidelines
+## 🌟 Key Features & Subsystems
 
-```
-mcp-pr-companion/
-├── bin/
-│   └── cli.js                      # CLI execution entrypoint (Supports CLI flags & Stdio)
-├── scripts/
-│   └── setup.js                    # 1-Click Auto-Setup & Healthcheck bootstrapper
-├── src/
-│   ├── cli/                        # Manual Terminal CLI Runner
-│   │   └── cli.runner.ts
-│   ├── healthcheck/                # Environment pre-flight check (Node, Git CLI)
-│   │   └── healthcheck.ts
-│   ├── config/                     # Configuration schema & loader
-│   │   ├── config.loader.ts
-│   │   └── config.schema.ts
-│   ├── core/                       # Core Git & Bitbucket extraction logic
-│   │   ├── bitbucket/              # Bitbucket REST API v2 connector
-│   │   │   └── bitbucket.service.ts
-│   │   ├── git/                    # Local Git CLI runner & parsers
-│   │   ├── analyzer/               # Module classifier & code highlight extractor
-│   │   └── generator/              # Payload JSON builder (~1-2KB output & file saver)
-│   ├── mcp/                        # MCP Protocol implementation (Stdio Transport)
-│   │   ├── server.ts
-│   │   └── tools/                  # Registered tool: generate_pr_payload
-│   └── utils/
-│       └── logger.ts               # Safe stderr logging (prevents stdio corruption)
-│
-├── ⚠️ config.json                  # [SENSITIVE] Local configuration (GIT IGNORED)
-├── config.example.json             # Safe default configuration template
-├── 🔒 output/                      # [GIT IGNORED] Auto-saved PR JSON payload archives
-├── package.json
-├── tsconfig.json
-└── README.md
-```
+1. **Dual-Interface Shared Architecture**:
+   - **Terminal UI (`npm run cmd`)**: Prepares, validates, and warms local caches.
+   - **MCP Server (`npm start`)**: Serves AI Agents with minimal disk I/O and zero redundant network calls.
+2. **Token & Context Optimization**:
+   - Reduces AI context token consumption by **70% - 95%** (~2-4KB manifest per PR vs 50KB+ raw diffs).
+   - Serves file-level AST highlights and risk tags on demand (`get_pr_file_changes`).
+3. **Async Batch Sync Engine**:
+   - Concurrent queue (`concurrency: 2`) with stage progress tracking (Queued ➔ Validate ➔ Metadata ➔ Commits ➔ Diffstat ➔ Diff Download ➔ Analysis ➔ Persist).
+   - Automatic exponential backoff retries with jitter for HTTP 429 (Rate Limit) and 5xx errors, respecting `Retry-After` headers.
+   - Clean `SIGINT` (`Ctrl+C`) cancellation with atomic write guarantees.
+4. **Deterministic Revision Caching**:
+   - Key format: `bitbucket:{workspace}:{repo}:{pr_id}:{source_hash}:{destination_hash}:v2:{config_hash}`.
+   - If source & target commit hashes are unchanged, sync operations skip diff downloads completely (100% Cache Hit).
+5. **Security & Scoped API Tokens**:
+   - Uses Bitbucket Scoped API Tokens (`BITBUCKET_READ_TOKEN`, `BITBUCKET_WRITE_TOKEN`).
+   - Credentials stored safely in `.mcp-pr-companion/secrets/credentials.env` (strictly **GIT IGNORED** and validated via `git check-ignore`).
+   - Automated token masking (`ATBB****abcd`) and redaction across log files and MCP payloads using `Redactor`.
+6. **Capability Guard & Write Safety**:
+   - Write capabilities default to `enabled: false`.
+   - `CapabilityGuard` blocks any write operations during background sync.
 
 ---
 
-## ⚙️ Available Commands & Scripts
+## 🖥️ Terminal UI Guide (`npm run cmd`)
 
-- **Run Manual Payload Generation**:
-  ```bash
-  npm run generate -- --url https://bitbucket.org/workspace/repo/pull-requests/123
-  ```
-- **1-Click Setup & Installation Bootstrapper**:
-  ```bash
-  npm run setup
-  ```
-- **Start Production MCP Server**:
-  ```bash
-  npm start
-  ```
-- **Start Development Mode (Hot Reload / Live TS)**:
-  ```bash
-  npm run dev
-  ```
-- **Run Pre-flight Healthcheck**:
-  ```bash
-  npm run healthcheck
-  ```
-- **Build TypeScript Project**:
-  ```bash
-  npm run build
-  ```
+Run the interactive terminal interface:
+
+```bash
+npm run cmd
+```
+
+### Main Menu Overview:
+
+```text
+🤖 MCP PR Companion Terminal UI
+  1. Configuration Settings
+  2. Manage PR Link Registry
+  3. Sync PR Data (Warm Local Cache)
+  4. Browse Local Cached PR Data
+  5. View Sync Logs Summary
+  6. Exit
+```
+
+1. **Configuration Settings**:
+   - Configure Workspace slug, Output Language (`vi`, `en`, `bilingual`), and Sync Concurrency.
+   - Masked input prompt for `BITBUCKET_READ_TOKEN` and `BITBUCKET_WRITE_TOKEN`.
+   - Run `Test Bitbucket Read Connection` (GET-only request).
+2. **Manage PR Link Registry**:
+   - Add/List/Remove Bitbucket PR URLs.
+   - Validate URLs (HTTPS protocol, host `bitbucket.org`, path structure, path traversal prevention `..`).
+   - Remove duplicates with single-click deduplication.
+3. **Sync PR Data**:
+   - Sync All PRs / Select specific PRs / Force Refresh.
+   - Live progress rendering showing percentage, current stage, and status per PR.
+   - Interruptible safely via `Ctrl+C`.
+4. **Browse Local Cached PR Data**:
+   - Inspect offline cached PR manifests, ticket IDs, file count, and last checked timestamps.
+5. **View Sync Logs Summary**:
+   - Inspect JSON Lines run logs (`.mcp-pr-companion/logs/YYYY-MM-DD/run-{id}.jsonl`) and summary reports.
 
 ---
 
-## 🛠️ MCP Client Integration Setup
+## 📡 MCP Server Tools & AI Integration
 
-Add the relative path execution command to your MCP configuration file:
+Start the MCP server over stdio transport:
+
+```bash
+npm start
+```
+
+### Registered Tools:
+
+| Tool | Description | Input Parameters | Output |
+| --- | --- | --- | --- |
+| `get_pr_manifest` | Returns compact agent-ready JSON manifest for a PR from local RAM/disk cache. | `pr_url` (string, required)<br>`refresh` (boolean, optional) | `PRManifest` (~2-4KB) |
+| `get_pr_file_changes` | Returns detailed AST highlights, risk tags, and hunk stats for a specific `file_id`. | `pr_url` (string, required)<br>`file_id` (number, required) | `PRFileDetail` |
+| `get_pr_sync_status` | Returns local cache sync status, current revision hash, and last checked timestamp. | `pr_url` (string, required) | `{ synced: boolean, current: object }` |
+| `refresh_pr_data` | Re-fetches fresh PR data from Bitbucket API (read-only) and updates local cache. | `pr_url` (string, required) | `PRManifest` |
+| `generate_pr_payload` | Backward-compatible tool for generating full PR payloads from local Git or Bitbucket. | `pr_url`, `source_branch`, `target_branch`, `repo_path` | Full PR Payload |
+
+### MCP Client Config (`mcpServers`):
 
 ```json
 {
@@ -180,9 +138,8 @@ Add the relative path execution command to your MCP configuration file:
     "mcp-pr-companion": {
       "command": "node",
       "args": [
-        "./dist/mcp/server.js"
-      ],
-      "env": {}
+        "d:/VisualStudioCode/mcp-pr-companion/dist/mcp/server.js"
+      ]
     }
   }
 }
@@ -190,10 +147,99 @@ Add the relative path execution command to your MCP configuration file:
 
 ---
 
-## 🚀 Usage Example
+## 🔑 Bitbucket API Token Setup Guide
 
-Provide a Bitbucket PR link to your AI assistant:
+1. Log into [Bitbucket Cloud](https://bitbucket.org).
+2. Go to **Personal settings** ➔ **App Passwords** or **API Tokens**.
+3. Create a token with the following minimum required **Read** scopes:
+   - ✅ **Pull requests**: `Read` (`read:pullrequest:bitbucket`)
+   - ✅ **Repositories**: `Read` (`read:repository:bitbucket`)
+4. Open `npm run cmd` ➔ **Configuration Settings** ➔ **Configure Bitbucket Read Token**.
+5. Enter your email and token. They will be saved to `.mcp-pr-companion/secrets/credentials.env`:
 
-> *"Here is my PR link: `https://bitbucket.org/workspace/repo/pull-requests/123`. Please use `generate_pr_payload` to fetch data and write a PR description for Bitbucket."*
+```env
+# Local MCP PR Companion Credentials
+BITBUCKET_EMAIL=user@company.com
+BITBUCKET_READ_TOKEN=ATBBxxxxxxxxxxxxxxxx
+BITBUCKET_WRITE_TOKEN=
+```
 
-The AI assistant will invoke `generate_pr_payload` locally, stream step-by-step progress to your console log, save a snapshot file to `./output/description_kb_WCE-815_pr_123_20260728_181235.json`, receive a lightweight ~1KB JSON summary, and render a formatted PR description.
+---
+
+## 📁 Runtime Directory & Project Layout
+
+```text
+mcp-pr-companion/
+├── .mcp-pr-companion/              # [GIT IGNORED] Local Runtime Storage
+│   ├── config/                     # base.json, read.json, write.json
+│   ├── secrets/                    # credentials.env
+│   ├── prs/                        # links.json (PR URL registry)
+│   ├── data/bitbucket/             # Raw patch files & compressed derived JSONs
+│   ├── state/                      # cache-index.json & job state
+│   └── logs/                       # JSON Lines run logs & summary reports
+│
+├── config.templates/               # Safe JSON configuration templates
+│   ├── base.example.json
+│   ├── read.example.json
+│   └── write.example.json
+│
+├── src/
+│   ├── cmd/                        # Terminal UI (runner, menus, progress renderer)
+│   │   ├── cmd.runner.ts
+│   │   ├── main.menu.ts
+│   │   ├── config.menu.ts
+│   │   ├── pr-list.menu.ts
+│   │   ├── sync.menu.ts
+│   │   └── progress.renderer.ts
+│   ├── config/                     # Config schema, manager, secret store, capability guard
+│   │   ├── config.schema.ts
+│   │   ├── config.manager.ts
+│   │   ├── secret.store.ts
+│   │   └── capability.guard.ts
+│   ├── core/                       # Core engine subsystems
+│   │   ├── bitbucket/              # Collector, client, auth, pagination
+│   │   ├── registry/               # PR registry & URL parser
+│   │   ├── storage/                # DataStore, atomic writer, cache index, retention
+│   │   ├── sync/                   # SyncManager, SyncJob, retry policy, stage events
+│   │   ├── analyzer/               # Module classifier & AST extractor
+│   │   ├── generator/              # Payload builder
+│   │   └── git/                    # Git executor (execFileSync) & parser
+│   ├── mcp/                        # MCP server & PR context service
+│   │   ├── server.ts
+│   │   └── context.service.ts
+│   └── utils/                      # Logger & Redactor
+│
+├── tests/                          # Automated unit & integration tests
+│   └── unit.test.ts
+├── package.json
+└── tsconfig.json
+```
+
+---
+
+## 🛠️ Package Scripts & Verification
+
+- **Launch Interactive Terminal UI**:
+  ```bash
+  npm run cmd
+  ```
+- **Start MCP Production Server**:
+  ```bash
+  npm start
+  ```
+- **Start MCP Dev Server (Hot Reload)**:
+  ```bash
+  npm run dev
+  ```
+- **Run Unit & Integration Test Suite**:
+  ```bash
+  npx tsx tests/unit.test.ts
+  ```
+- **Check TypeScript Types**:
+  ```bash
+  npx tsc --noEmit
+  ```
+- **Build Production Assets**:
+  ```bash
+  npm run build
+  ```

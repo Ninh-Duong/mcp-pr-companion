@@ -12,6 +12,8 @@
     "build": "tsc",
     "start": "node dist/mcp/server.js",
     "dev": "tsx src/mcp/server.ts",
+    "cmd": "tsx src/cmd/cmd.runner.ts",
+    "cmd:prod": "node dist/cmd/cmd.runner.js",
     "healthcheck": "tsx src/healthcheck/healthcheck.ts",
     "generate": "node dist/cli/cli.runner.js"
   },
@@ -26,10 +28,14 @@
   "author": "Ninh Duong",
   "license": "MIT",
   "dependencies": {
+    "@inquirer/prompts": "^8.5.2",
     "@modelcontextprotocol/sdk": "^1.6.0",
+    "cli-progress": "^3.12.0",
+    "p-limit": "^7.3.1",
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@types/cli-progress": "^3.11.6",
     "@types/node": "^22.10.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
