@@ -6,6 +6,8 @@ import { GenerationManager } from '../core/generation/generation.manager.js';
 import { GenerationProgressRenderer } from './generation-progress.renderer.js';
 import { TokenVerifyScreen } from './token-verify.screen.js';
 import { DataStore } from '../core/storage/data.store.js';
+import { PRReadinessFilter, PRViewFilter } from '../core/discovery/pr-view-filter.js';
+import { PRDiscoveryService } from '../core/discovery/pr-discovery.service.js';
 
 export class GenerateMenu {
   private static lastFailedPRs: DiscoveredPR[] = [];
@@ -14,30 +16,46 @@ export class GenerateMenu {
     const session = runtimeSession.getSession();
     if (!session) return;
 
+    const { email, token, currentUserUuid } = runtimeSession.getAuthenticatedIdentity();
+    const { workspace, repoSlug } = session.repository;
+
+    let selectedFilter: PRReadinessFilter = 'all';
+
     while (true) {
-      const prs = DiscoveryCache.getPRs();
+      let prs = DiscoveryCache.getPRs(currentUserUuid, workspace, repoSlug);
+      if (prs.length === 0) {
+        try {
+          prs = await PRDiscoveryService.discoverOpenPRs(email, token, workspace, repoSlug, currentUserUuid);
+        } catch {
+          prs = [];
+        }
+      }
+
+      const filteredPRs = PRViewFilter.apply(prs, currentUserUuid, selectedFilter);
+
       console.clear();
       console.log('========================================================');
       console.log('                 GENERATE PR DATA                       ');
       console.log('========================================================');
-      console.log('Current filter:');
-      console.log(`- Account:    Authenticated (${session.displayName || 'User'})`);
-      console.log(`- Repository: ${session.repository.opaqueId}`);
-      console.log(`- State:      Open`);
-      console.log(`- PR count:   ${prs.length}`);
+      console.log(`- Account:          ${email}`);
+      console.log(`- Repository:       ${workspace}/${repoSlug}`);
+      console.log(`- Readiness Filter: ${selectedFilter.toUpperCase()}`);
+      console.log(`- Total Owned PRs:  ${prs.length}`);
+      console.log(`- Filtered PRs:     ${filteredPRs.length}`);
       console.log('========================================================\n');
 
       const choices: Array<{ name: string; value: string }> = [
-        { name: '1. Generate all PRs', value: 'all' },
+        { name: '1. Generate all matching PRs', value: 'all' },
         { name: '2. Select PRs to generate', value: 'select' },
-        { name: '3. Generate new/outdated PRs only (Recommended)', value: 'outdated_only' }
+        { name: '3. Generate new/outdated PRs only (Recommended)', value: 'outdated_only' },
+        { name: '4. Change Readiness Scope (Ready/Draft/All)', value: 'change_filter' }
       ];
 
       if (this.lastFailedPRs.length > 0) {
-        choices.push({ name: `4. Retry failed PRs (${this.lastFailedPRs.length})`, value: 'retry_failed' });
+        choices.push({ name: `5. Retry failed PRs (${this.lastFailedPRs.length})`, value: 'retry_failed' });
       }
 
-      choices.push({ name: '5. Back', value: 'back' });
+      choices.push({ name: '6. ⬅️ Back to Main Menu', value: 'back' });
 
       const action = await select({
         message: 'Options:',
@@ -48,34 +66,53 @@ export class GenerateMenu {
         return;
       }
 
+      if (action === 'change_filter') {
+        const nextFilter = await select<PRReadinessFilter | 'cancel'>({
+          message: 'Select readiness filter for generation:',
+          choices: [
+            { name: '1. Open / Ready PRs (Exclude Drafts)', value: 'ready' },
+            { name: '2. Draft PRs Only', value: 'draft' },
+            { name: '3. All Open PRs (Ready + Draft)', value: 'all' },
+            { name: '4. ⬅️ Cancel', value: 'cancel' }
+          ]
+        });
+
+        if (nextFilter !== 'cancel') {
+          selectedFilter = nextFilter;
+        }
+        continue;
+      }
+
       let prsToGenerate: DiscoveredPR[] = [];
 
       if (action === 'all') {
-        prsToGenerate = prs;
+        prsToGenerate = filteredPRs;
       } else if (action === 'outdated_only') {
-        prsToGenerate = prs.filter(p => p.cacheStatus !== 'Cached');
+        prsToGenerate = filteredPRs.filter(p => p.cacheStatus !== 'Cached');
       } else if (action === 'retry_failed') {
         prsToGenerate = this.lastFailedPRs;
       } else if (action === 'select') {
-        if (prs.length === 0) {
-          console.log('\nNo PRs available to select.');
+        if (filteredPRs.length === 0) {
+          console.log('\nNo matching PRs available to select.');
+          await new Promise(r => setTimeout(r, 1500));
           continue;
         }
 
         const selectedIds = await checkbox({
-          message: 'Select pull requests to generate:',
-          choices: prs.map(p => ({
-            name: `#${p.id} ${p.title} [${p.cacheStatus}]`,
+          message: 'Select pull requests to generate (Space to select, Enter to confirm):',
+          choices: filteredPRs.map(p => ({
+            name: `${p.isDraft ? '[DRAFT]' : '[READY]'} #${p.id} ${p.title} [${p.cacheStatus}]`,
             value: p.id
           }))
         });
 
         if (selectedIds.length === 0) {
-          console.log('\nNo pull requests selected.');
+          console.log('\nNo pull requests selected. Generation cancelled.');
+          await new Promise(r => setTimeout(r, 1500));
           continue;
         }
 
-        prsToGenerate = prs.filter(p => selectedIds.includes(p.id));
+        prsToGenerate = filteredPRs.filter(p => selectedIds.includes(p.id));
       }
 
       if (prsToGenerate.length === 0) {
@@ -86,8 +123,8 @@ export class GenerateMenu {
 
       // Step 1: Token scope verification & approval
       const tokenValid = await TokenVerifyScreen.verifyOrUpdateToken();
-      if (!tokenValid) {
-        console.log('\nGeneration cancelled: API token does not have required read permissions.');
+      if (tokenValid !== 'valid') {
+        console.log('\nGeneration cancelled: Token verification failed or cancelled by user.');
         await new Promise((res) => setTimeout(res, 2000));
         continue;
       }
@@ -110,9 +147,14 @@ export class GenerateMenu {
           choices: [
             { name: '1. Overwrite existing data (Replace in place)', value: 'overwrite' },
             { name: '2. Create new version (Preserve history & update latest version)', value: 'new_version' },
-            { name: '3. Skip PRs with existing data', value: 'skip' }
+            { name: '3. Skip PRs with existing data', value: 'skip' },
+            { name: '4. ⬅️ Cancel and return to Generate menu', value: 'cancel' }
           ]
         });
+
+        if (strategyChoice === 'cancel') {
+          continue;
+        }
 
         if (strategyChoice === 'skip') {
           prsToGenerate = prsToGenerate.filter((pr) => {
@@ -134,10 +176,6 @@ export class GenerateMenu {
       }
 
       // Confirmation screen
-      const cachedCount = prsToGenerate.filter(p => p.cacheStatus === 'Cached').length;
-      const outdatedCount = prsToGenerate.filter(p => p.cacheStatus === 'Outdated').length;
-      const missingCount = prsToGenerate.filter(p => p.cacheStatus === 'Missing').length;
-
       console.log(`\nGeneration Plan Summary:`);
       console.log(`- Selected PRs:           ${prsToGenerate.length}`);
       console.log(`- Conflict strategy:      ${strategy === 'new_version' ? 'Create new version' : 'Overwrite'}`);

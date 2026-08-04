@@ -3,6 +3,7 @@ import { OpaqueIDGenerator } from '../storage/opaque.id.js';
 import { CapabilityProbe } from './capability.probe.js';
 import { FileLogger } from '../logging/file.logger.js';
 import { runtimeSession, RuntimeSession } from './runtime-session.js';
+import { AccountPolicy } from './account-policy.js';
 
 export interface RepositoryParseResult {
   valid: boolean;
@@ -70,6 +71,22 @@ export class AuthService {
     error?: string;
     suggestion?: string;
   }> {
+    const emailPolicy = AccountPolicy.validateEmail(email);
+    if (!emailPolicy.allowed) {
+      const logger = new FileLogger('auth');
+      logger.log({
+        stage: 'account_policy_validation',
+        status: 'failed',
+        error_code: 'ACCOUNT_NOT_ALLOWED',
+        message: emailPolicy.reason
+      });
+      return {
+        success: false,
+        logFilePath: logger.getLogFilePath(),
+        error: emailPolicy.reason
+      };
+    }
+
     const repoParse = this.parseRepositoryInput(repositoryInput);
     if (!repoParse.valid || !repoParse.workspace || !repoParse.repoSlug) {
       const logger = new FileLogger('auth');

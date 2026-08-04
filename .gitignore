@@ -8,7 +8,7 @@ config.local.json
 *.key
 
 # Temporary Data & Output Dumps
-output/
+/output/
 temp/
 Logs/
 *.log

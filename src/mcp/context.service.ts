@@ -59,7 +59,7 @@ export class PRContextService {
       const rawRev = await collector.collect(parsed.workspace, parsed.repoSlug, parsed.prId);
       const result = DataStore.saveRevision(parsed.workspace, parsed.repoSlug, parsed.prId, rawRev);
 
-      this.setManifestCache(prKey, result.manifest, result.manifest.active_revision);
+      this.setManifestCache(prKey, result.manifest, result.revisionId);
       return result.manifest;
     })();
 

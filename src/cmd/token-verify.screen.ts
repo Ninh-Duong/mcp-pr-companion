@@ -1,6 +1,9 @@
-import { confirm, password } from '@inquirer/prompts';
+import { select, password } from '@inquirer/prompts';
 import { runtimeSession } from '../core/auth/runtime-session.js';
 import { CapabilityProbe } from '../core/auth/capability.probe.js';
+import { SessionStore } from '../core/auth/session.store.js';
+
+export type TokenVerifyResult = 'valid' | 'cancelled' | 'failed';
 
 export class TokenVerifyScreen {
   static displayScopeNotice(): void {
@@ -19,11 +22,11 @@ export class TokenVerifyScreen {
     console.log('  ✗ NO Write, Admin, or Delete permissions are required.\n');
   }
 
-  static async verifyOrUpdateToken(): Promise<boolean> {
+  static async verifyOrUpdateToken(): Promise<TokenVerifyResult> {
     this.displayScopeNotice();
 
     const session = runtimeSession.getSession();
-    if (!session) return false;
+    if (!session) return 'failed';
 
     // Test capability with active session token
     const probe = await CapabilityProbe.executeProbes(
@@ -35,17 +38,21 @@ export class TokenVerifyScreen {
 
     if (probe.success) {
       console.log('[✓] Active session token verified with required read permissions.\n');
-      return true;
+      return 'valid';
     }
 
-    console.log(`[✗] Active session token failed verification: ${probe.failedStage?.message || 'Missing required scopes'}`);
-    const shouldUpdate = await confirm({
+    console.log(`[✗] Active session token failed verification: ${probe.failedStage?.message || 'Missing required scopes'}\n`);
+    
+    const choice = await select<'update' | 'cancel'>({
       message: 'Would you like to enter an API Token with full read permissions for data generation?',
-      default: true
+      choices: [
+        { name: '1. Enter new API Token', value: 'update' },
+        { name: '2. ⬅️ Cancel and return to Generate menu', value: 'cancel' }
+      ]
     });
 
-    if (!shouldUpdate) {
-      return false;
+    if (choice === 'cancel') {
+      return 'cancelled';
     }
 
     const newToken = await password({
@@ -64,11 +71,13 @@ export class TokenVerifyScreen {
 
     if (reProbe.success) {
       session.token = newToken.trim();
-      console.log('[✓] Token verified successfully and updated in session RAM.\n');
-      return true;
+      runtimeSession.setSession(session);
+      SessionStore.saveSession(session);
+      console.log('[✓] Token verified successfully and updated in session storage.\n');
+      return 'valid';
     } else {
       console.log(`[✗] New token failed verification: ${reProbe.failedStage?.message}\n`);
-      return false;
+      return 'failed';
     }
   }
 }

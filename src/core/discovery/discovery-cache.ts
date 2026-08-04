@@ -1,20 +1,34 @@
 import { DataStore } from '../storage/data.store.js';
 import { DiscoveredPR } from './pr-list.normalizer.js';
+import { normalizeUuid } from '../auth/current-user.resolver.js';
 
 export class DiscoveryCache {
-  private static prsMap = new Map<number, DiscoveredPR>();
+  private static scopedMap = new Map<string, Map<number, DiscoveredPR>>();
 
-  static setPRs(prs: DiscoveredPR[]): void {
-    this.prsMap.clear();
-    prs.forEach(pr => this.prsMap.set(pr.id, pr));
+  static getScopeKey(userUuid: string, workspace: string, repoSlug: string): string {
+    const normUuid = normalizeUuid(userUuid);
+    const normWs = workspace.trim().toLowerCase();
+    const normRepo = repoSlug.trim().toLowerCase();
+    return `${normUuid}:${normWs}:${normRepo}`;
   }
 
-  static getPRs(): DiscoveredPR[] {
-    return Array.from(this.prsMap.values());
+  static setPRs(userUuid: string, workspace: string, repoSlug: string, prs: DiscoveredPR[]): void {
+    const key = this.getScopeKey(userUuid, workspace, repoSlug);
+    const prMap = new Map<number, DiscoveredPR>();
+    prs.forEach(pr => prMap.set(pr.id, pr));
+    this.scopedMap.set(key, prMap);
   }
 
-  static getPR(prId: number): DiscoveredPR | undefined {
-    return this.prsMap.get(prId);
+  static getPRs(userUuid: string, workspace: string, repoSlug: string): DiscoveredPR[] {
+    const key = this.getScopeKey(userUuid, workspace, repoSlug);
+    const prMap = this.scopedMap.get(key);
+    return prMap ? Array.from(prMap.values()) : [];
+  }
+
+  static getPR(userUuid: string, workspace: string, repoSlug: string, prId: number): DiscoveredPR | undefined {
+    const key = this.getScopeKey(userUuid, workspace, repoSlug);
+    const prMap = this.scopedMap.get(key);
+    return prMap ? prMap.get(prId) : undefined;
   }
 
   static evaluateCacheStatus(
@@ -52,7 +66,16 @@ export class DiscoveryCache {
     return 'Outdated';
   }
 
+  static clearScope(userUuid: string, workspace: string, repoSlug: string): void {
+    const key = this.getScopeKey(userUuid, workspace, repoSlug);
+    this.scopedMap.delete(key);
+  }
+
+  static clearAll(): void {
+    this.scopedMap.clear();
+  }
+
   static clear(): void {
-    this.prsMap.clear();
+    this.clearAll();
   }
 }

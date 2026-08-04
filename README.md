@@ -48,6 +48,28 @@ Both the Terminal UI and MCP Server share a single underlying core subsystem:
 
 ---
 
+## 🔒 Security, Account Policy & Ownership Isolation
+
+1. **Account Identity Hard-Locking**:
+   - CLI authentication strictly restricts login to authorized account: `ninh.duong@siliconstack.com.au`.
+   - Account identity is resolved directly from Bitbucket Cloud API `/2.0/user` to obtain the account UUID (`currentUserUuid`).
+
+2. **Mandatory Ownership Filtering**:
+   - All Bitbucket PR queries explicitly construct `state="OPEN" AND author.uuid="{uuid}"`.
+   - Client-side ownership policy (`PROwnershipPolicy`) strictly filters raw API responses to ensure PRs belonging to other authors are never displayed or stored in discovery cache.
+
+3. **Readiness Scope Filter (Open / Ready vs. Draft)**:
+   - Users can filter PR views and generation targets by:
+     - **Open / Ready PRs**: `state === "OPEN" && isDraft === false`
+     - **Draft PRs**: `state === "OPEN" && isDraft === true`
+     - **All Open PRs**: `state === "OPEN"` (includes both Ready and Draft)
+   - Ownership isolation (`author.uuid === currentUserUuid`) is strictly enforced across ALL readiness filters.
+
+4. **Universal Navigation UX**:
+   - Every submenu and selection prompt includes an explicit `⬅️ Back` or `Cancel` action to prevent stuck navigation states or unintended operations.
+
+---
+
 ## 🌟 Key Features & Subsystems
 
 1. **Dual-Interface Shared Architecture**:
@@ -80,6 +102,36 @@ Run the interactive terminal interface:
 ```bash
 npm run cmd
 ```
+
+---
+
+## ⚡ One-Command Mode (`npm run mcp-pr-companion`)
+
+Run automated sequential discovery and generation for all open PRs owned by the authenticated user in a single command:
+
+```bash
+npm run mcp-pr-companion
+```
+
+### Execution Flow:
+1. **Session Reuse / Authentication**:
+   - Automatically checks for an active local session (`.mcp-pr-companion/session.json`, 30-minute security TTL).
+   - Confirms session reuse or prompts for email, workspace/repo, and masked API token.
+2. **PR Discovery**:
+   - Resolves `currentUserUuid` from Bitbucket API `/2.0/user`.
+   - Discovers all `state === "OPEN"` pull requests matching `author.uuid === currentUserUuid`.
+3. **Readiness Scope & Caching Policy**:
+   - Includes both **Ready** and **Draft** PRs (`readiness: 'all'`).
+   - Smart cache policy (`forceRefresh = false`): New and updated PRs are generated; unchanged PRs reuse cached data.
+4. **Summary & Process Exit Codes**:
+   - Renders live progress and outputs a final summary report.
+   - Standard Exit Codes:
+     - `0`: Success (all PRs generated/cached, or 0 PRs discovered)
+     - `2`: Partial failure (one or more PRs failed generation)
+     - `1`: Authentication, token, repository, or unexpected error
+     - `130`: Interrupted by user (Ctrl+C or prompt cancellation)
+
+---
 
 ### Main Menu Overview:
 

@@ -2,12 +2,22 @@ import { ApiTokenAuth } from './api-token.auth.js';
 
 export interface BitbucketUser {
   uuid: string;
+  rawUuid: string;
   display_name?: string;
   username?: string;
   account_id?: string;
 }
 
+export function normalizeUuid(uuid: string | null | undefined): string {
+  if (!uuid) return '';
+  return uuid.replace(/[{}]/g, '').trim().toLowerCase();
+}
+
 export class CurrentUserResolver {
+  static normalizeUuid(uuid: string | null | undefined): string {
+    return normalizeUuid(uuid);
+  }
+
   static async resolveCurrentUser(email: string, token: string): Promise<{ success: boolean; user?: BitbucketUser; error?: string; status?: number }> {
     const url = 'https://api.bitbucket.org/2.0/user';
     const headers = ApiTokenAuth.getAuthHeaders(email, token);
@@ -22,14 +32,17 @@ export class CurrentUserResolver {
       }
 
       const data: any = await res.json();
-      if (!data.uuid) {
-        return { success: false, error: 'User endpoint did not return an account UUID' };
+      const rawUuid = data.uuid;
+      const normalized = normalizeUuid(rawUuid);
+      if (!normalized) {
+        return { success: false, error: 'User endpoint did not return a valid account UUID' };
       }
 
       return {
         success: true,
         user: {
-          uuid: data.uuid,
+          uuid: normalized,
+          rawUuid: rawUuid || normalized,
           display_name: data.display_name || data.username || 'Authenticated User',
           username: data.username,
           account_id: data.account_id

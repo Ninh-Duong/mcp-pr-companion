@@ -1,5 +1,6 @@
 import { PIISanitizer } from '../privacy/pii.sanitizer.js';
 import { Redactor } from '../../utils/redactor.js';
+import { normalizeUuid } from '../auth/current-user.resolver.js';
 
 export interface DiscoveredPR {
   id: number;
@@ -22,7 +23,18 @@ export class PRListNormalizer {
     const targetBranch = rawPr.destination?.branch?.name || 'unknown';
     const sourceCommitHash = rawPr.source?.commit?.hash;
     const destinationCommitHash = rawPr.destination?.commit?.hash;
-    const isDraft = Boolean(rawPr.draft || rawPr.title?.toLowerCase().includes('draft'));
+
+    // Use official API draft field if available
+    let isDraft = false;
+    if (typeof rawPr.draft === 'boolean') {
+      isDraft = rawPr.draft;
+    } else if (typeof rawPr.is_draft === 'boolean') {
+      isDraft = rawPr.is_draft;
+    } else {
+      isDraft = Boolean(rawPr.title?.toLowerCase().includes('[draft]') || rawPr.title?.toLowerCase().startsWith('draft:'));
+    }
+
+    const normAuthorUuid = normalizeUuid(rawPr.author?.uuid);
 
     return {
       id: rawPr.id,
@@ -34,7 +46,7 @@ export class PRListNormalizer {
       sourceCommitHash,
       destinationCommitHash,
       updatedOn: rawPr.updated_on || new Date().toISOString(),
-      authorUuid: rawPr.author?.uuid,
+      authorUuid: normAuthorUuid || undefined,
       cacheStatus
     };
   }

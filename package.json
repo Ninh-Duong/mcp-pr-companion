@@ -9,13 +9,18 @@
   "type": "module",
   "scripts": {
     "setup": "node scripts/setup.js",
+    "check-deps": "node scripts/check-packages.js",
+    "install-deps": "node scripts/check-packages.js -y",
     "build": "tsc",
     "start": "node dist/mcp/server.js",
     "dev": "tsx src/mcp/server.ts",
+    "mcp-pr-companion": "tsx src/cmd/generate-all.runner.ts",
+    "mcp-pr-companion:prod": "node dist/cmd/generate-all.runner.js",
     "cmd": "tsx src/cmd/cmd.runner.ts",
     "cmd:prod": "node dist/cmd/cmd.runner.js",
     "healthcheck": "tsx src/healthcheck/healthcheck.ts",
-    "generate": "node dist/cli/cli.runner.js"
+    "generate": "node dist/cli/cli.runner.js",
+    "test": "tsx tests/unit.test.ts && tsx tests/contract.test.ts && tsx tests/integrity.test.ts && tsx tests/aggregate.test.ts && tsx tests/golden.test.ts && tsx tests/atomic_write.test.ts && tsx tests/orchestration.test.ts"
   },
   "keywords": [
     "mcp",

@@ -146,7 +146,12 @@ index 1234567..89abcdef 100644
           change: {
             schema_version: '4.0',
             file_id: 'file_0001',
-            classification: commentClassification,
+            classification: {
+              kind: commentClassification.kind,
+              functional_change: commentClassification.functionalChange,
+              confidence: commentClassification.confidence,
+              evidence: commentClassification.evidence
+            },
             symbols: [],
             risk: commentRisk,
             patch_ref: 'patch.diff',
