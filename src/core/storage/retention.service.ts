@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { ConfigManager } from '../../config/config.manager.js';
 import { DataStore } from './data.store.js';
+import { RevisionWriter } from '../output/revision.writer.js';
 import { Logger } from '../../utils/logger.js';
 
 export class RetentionService {
@@ -10,7 +11,7 @@ export class RetentionService {
     const maxRevisions = config.cache.max_revisions_per_pr || 3;
     const retentionDays = config.cache.retention_days || 30;
 
-    const prDir = DataStore.getPRDir(workspace, repoSlug, prId);
+    const prDir = RevisionWriter.getPROutputDir(workspace, repoSlug, prId);
     const revisionsDir = path.join(prDir, 'revisions');
 
     if (!fs.existsSync(revisionsDir)) {
@@ -18,7 +19,7 @@ export class RetentionService {
     }
 
     const active = DataStore.getActiveRevision(workspace, repoSlug, prId);
-    const activeSourceHash = active?.current?.source_hash;
+    const activeRevisionId = active?.current?.active_revision;
 
     let removedCount = 0;
     try {
@@ -39,8 +40,9 @@ export class RetentionService {
       const maxAgeMs = retentionDays * 24 * 60 * 60 * 1000;
 
       revisionFolders.forEach((rev, index) => {
-        // Never delete active revision
-        if (activeSourceHash && rev.folder === activeSourceHash) return;
+        // Never delete active revision or temporary staging folders currently writing
+        if (rev.folder.startsWith('.tmp-')) return;
+        if (activeRevisionId && rev.folder === activeRevisionId) return;
 
         const isExceedingCount = index >= maxRevisions;
         const isExpired = (now - rev.mtimeMs) > maxAgeMs;
@@ -60,28 +62,28 @@ export class RetentionService {
   static cleanLogs(): { removedLogsCount: number } {
     const config = ConfigManager.loadBase();
     const retentionDays = config.cache.retention_days || 30;
-    const logsDir = path.resolve(process.cwd(), '.mcp-pr-companion', 'logs');
+    const logsDir = path.resolve(process.cwd(), 'Logs');
 
     if (!fs.existsSync(logsDir)) {
       return { removedLogsCount: 0 };
     }
 
     let removedLogsCount = 0;
-    const now = Date.now();
-    const maxAgeMs = retentionDays * 24 * 60 * 60 * 1000;
-
     try {
-      const entries = fs.readdirSync(logsDir, { recursive: true }) as string[];
-      for (const entry of entries) {
-        const fullPath = path.join(logsDir, entry);
+      const files = fs.readdirSync(logsDir);
+      const now = Date.now();
+      const maxAgeMs = retentionDays * 24 * 60 * 60 * 1000;
+
+      files.forEach(file => {
+        const fullPath = path.join(logsDir, file);
         const stat = fs.statSync(fullPath);
-        if (stat.isFile() && (now - stat.mtimeMs) > maxAgeMs) {
-          fs.rmSync(fullPath, { force: true });
+        if (now - stat.mtimeMs > maxAgeMs) {
+          fs.unlinkSync(fullPath);
           removedLogsCount++;
         }
-      }
+      });
     } catch (err) {
-      // Ignore
+      Logger.warn('Failed during logs cleanup', err);
     }
 
     return { removedLogsCount };

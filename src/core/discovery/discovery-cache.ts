@@ -30,24 +30,22 @@ export class DiscoveryCache {
       return 'Missing';
     }
 
-    const manifest = active.manifest;
+    const current = active.current;
 
     // Compare commit hashes if available
     if (sourceCommitHash && destinationCommitHash) {
-      // Revisions check
-      if (
-        active.current?.source_hash === sourceCommitHash &&
-        active.current?.destination_hash === destinationCommitHash
-      ) {
+      const srcMatch = current?.source_commit === sourceCommitHash || current?.source_hash === sourceCommitHash;
+      const dstMatch = current?.target_commit === destinationCommitHash || current?.destination_hash === destinationCommitHash;
+      if (srcMatch && dstMatch) {
         return 'Cached';
       }
     }
 
-    // Check manifest timestamp vs updatedOn
-    const manifestTime = new Date(manifest.generated_at).getTime();
+    // Check current generated_at timestamp vs updatedOn
+    const generatedTime = current?.generated_at ? new Date(current.generated_at).getTime() : 0;
     const prUpdatedTime = new Date(updatedOn).getTime();
 
-    if (manifestTime >= prUpdatedTime) {
+    if (generatedTime >= prUpdatedTime) {
       return 'Cached';
     }
 

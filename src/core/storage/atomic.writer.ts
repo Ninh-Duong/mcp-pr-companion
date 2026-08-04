@@ -30,6 +30,13 @@ export class AtomicWriter {
   }
 
   /**
+   * Writes JSON object atomically.
+   */
+  static writeJson(targetPath: string, data: any): void {
+    this.writeFileSync(targetPath, JSON.stringify(data, null, 2));
+  }
+
+  /**
    * Writes gzipped data atomically.
    */
   static writeGzipSync(targetPath: string, content: string | Buffer): void {

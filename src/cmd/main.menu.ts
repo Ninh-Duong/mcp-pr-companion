@@ -1,23 +1,24 @@
 import { select } from '@inquirer/prompts';
 import { runtimeSession } from '../core/auth/runtime-session.js';
-import { DiscoveryCache } from '../core/discovery/discovery-cache.js';
 import { PRListScreen } from './pr-list.screen.js';
 import { GenerateMenu } from './generate.menu.js';
 import { LogoutService } from './logout.service.js';
 
 export class MainMenu {
   static displayHeader(): void {
-    const session = runtimeSession.getSession();
-    const openPrs = DiscoveryCache.getPRs().length;
-
     console.clear();
-    console.log('========================================================');
-    console.log('                  MCP PR COMPANION                      ');
-    console.log(`Account:    Authenticated (${session?.displayName || 'User'})`);
-    console.log(`Repository: ${session?.repository.opaqueId || 'N/A'}`);
-    console.log(`Mode:       Read only`);
-    console.log(`Open PRs:   ${openPrs}`);
-    console.log('========================================================\n');
+    console.log(`================================================================`);
+    console.log(`                     MCP PR Companion CLI                       `);
+    console.log(`================================================================`);
+
+    const session = runtimeSession.getSession();
+    if (session) {
+      console.log(` Logged in as : ${session.email}`);
+      console.log(` Repository   : ${session.repository.workspace}/${session.repository.repoSlug}`);
+    } else {
+      console.log(` Status       : Not logged in`);
+    }
+    console.log(`----------------------------------------------------------------\n`);
   }
 
   static async displayMenu(): Promise<void> {
@@ -34,7 +35,7 @@ export class MainMenu {
       });
 
       if (choice === 'view_prs') {
-        await PRListScreen.displayMenu();
+        await PRListScreen.render();
       } else if (choice === 'generate_data') {
         await GenerateMenu.displayMenu();
       } else if (choice === 'logout') {

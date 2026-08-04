@@ -45,7 +45,7 @@ export class GenerationJob {
       updateStage('analysis', 85);
       updateStage('atomic_persistence', 95);
 
-      DataStore.saveRevision(workspace, repoSlug, prId, rawRev, strategy);
+      DataStore.saveRevision(workspace, repoSlug, prId, rawRev);
 
       jobState.status = 'complete';
       updateStage('complete', 100);
