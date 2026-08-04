@@ -1,88 +1,67 @@
 import fs from 'fs';
 import path from 'path';
-import { AtomicWriter } from './atomic.writer.js';
-import { CacheIndex } from './cache.index.js';
 import { RawPRRevision } from '../bitbucket/bitbucket.types.js';
 import { ConfigManager } from '../../config/config.manager.js';
 import { GitParser } from '../git/git.parser.js';
 import { OpaqueIDGenerator } from './opaque.id.js';
-import { StableSerializer } from './stable.serializer.js';
-import { PRManifestV3 } from '../privacy/manifest.v3.schema.js';
-import { PRFileDetailV3 } from '../privacy/file_detail.v3.schema.js';
 import { RedactionTracker } from '../privacy/redaction.report.js';
 import { PIISanitizer } from '../privacy/pii.sanitizer.js';
 import { SecretScanner } from '../privacy/secret.scanner.js';
 import { PathSanitizer } from '../privacy/path.sanitizer.js';
-import { URLSanitizer } from '../privacy/url.sanitizer.js';
 import { SensitiveFilePolicy } from '../analyzer/sensitive.file.policy.js';
 import { BitbucketAllowlistProjector } from '../bitbucket/bitbucket.allowlist.js';
+import { DiffParser } from '../analyzer/diff.parser.js';
+import { ChangeClassifier, ChangeKind } from '../analyzer/change.classifier.js';
+import { RiskAnalyzer, RiskLevel } from '../analyzer/risk.analyzer.js';
+import { SymbolExtractor } from '../analyzer/symbol.extractor.js';
+import { RevisionWriter } from '../output/revision.writer.js';
+import { OutputReader } from '../output/output.reader.js';
+import { PRManifestV4 } from '../output/schema/manifest.v4.schema.js';
+import { FileIndexEntryV4 } from '../output/schema/file_index.v4.schema.js';
+import { FileChangeV4 } from '../output/schema/file_change.v4.schema.js';
+import { PRCoverageV4 } from '../output/schema/coverage.v4.schema.js';
 
 export class DataStore {
-  private static baseDataDir = path.resolve(process.cwd(), '.mcp-pr-companion', 'data', 'repositories');
+  private static rawDataDir = path.resolve(process.cwd(), '.mcp-pr-companion', 'data', 'raw');
 
-  static getPRDir(workspace: string, repoSlug: string, prId: number): string {
-    const repoId = OpaqueIDGenerator.getRepositoryID(workspace, repoSlug);
-    return path.join(this.baseDataDir, repoId, `pr_${prId}`);
+  static getActiveRevision(workspace: string, repoSlug: string, prId: number) {
+    return OutputReader.getActiveRevision(workspace, repoSlug, prId);
   }
 
-  static getRevisionDir(workspace: string, repoSlug: string, prId: number, sourceHash: string, destinationHash: string): string {
-    const revId = OpaqueIDGenerator.getRevisionID(sourceHash, destinationHash);
-    return path.join(this.getPRDir(workspace, repoSlug, prId), 'revisions', revId);
-  }
-
-  /**
-   * Checks if current.json exists and points to an active complete revision.
-   */
-  static getActiveRevision(workspace: string, repoSlug: string, prId: number): { current: any; manifest?: PRManifestV3 } | null {
-    const prDir = this.getPRDir(workspace, repoSlug, prId);
-    const currentFile = path.join(prDir, 'current.json');
-
-    if (!fs.existsSync(currentFile)) {
-      return null;
-    }
-
-    try {
-      const current = JSON.parse(fs.readFileSync(currentFile, 'utf-8'));
-      const manifestFile = path.join(prDir, current.revision_path, 'manifest.json');
-
-      if (fs.existsSync(manifestFile)) {
-        const manifest: PRManifestV3 = JSON.parse(fs.readFileSync(manifestFile, 'utf-8'));
-        return { current, manifest };
-      }
-    } catch {
-      // Ignore read error
-    }
-
-    return null;
+  static getFileDetail(workspace: string, repoSlug: string, prId: number, fileId: string | number) {
+    const normalizedId = typeof fileId === 'number' ? `file_${String(fileId).padStart(4, '0')}` : fileId;
+    return OutputReader.getFileChange(workspace, repoSlug, prId, normalizedId);
   }
 
   /**
-   * Persists Schema v3.0 agent manifest and compressed file details with strict PII & secret redaction.
+   * Persists Raw Bitbucket payload internally (debug/retention only)
+   * and generates Agent-Optimized Output Schema v4.
    */
   static saveRevision(
     workspace: string,
     repoSlug: string,
     prId: number,
-    rawRev: RawPRRevision,
-    strategy: 'overwrite' | 'new_version' = 'overwrite'
-  ): { cacheKey: string; manifest: PRManifestV3 } {
+    rawRev: RawPRRevision
+  ): { cacheKey: string; manifest: PRManifestV4 } {
     const config = ConfigManager.loadBase();
     const privacy = config.privacy;
     const tracker = new RedactionTracker();
 
-    const repoId = OpaqueIDGenerator.getRepositoryID(workspace, repoSlug);
-    const baseRevId = OpaqueIDGenerator.getRevisionID(rawRev.sourceHash, rawRev.destinationHash);
-    const revId = strategy === 'new_version' ? `${baseRevId}_v${Date.now()}` : baseRevId;
-    const prDir = this.getPRDir(workspace, repoSlug, prId);
-    const revDir = path.join(prDir, 'revisions', revId);
-    const filesDir = path.join(revDir, 'files');
+    // 1. Save Internal Raw Cache (For debugging, never exposed to MCP / agent output)
+    const rawRepoDir = path.join(this.rawDataDir, OpaqueIDGenerator.getRepositoryID(workspace, repoSlug), `pr_${prId}`);
+    fs.mkdirSync(rawRepoDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(rawRepoDir, `raw_rev_${OpaqueIDGenerator.getRevisionID(rawRev.sourceHash, rawRev.destinationHash).substring(0, 12)}.json`),
+      JSON.stringify(rawRev, null, 2),
+      'utf-8'
+    );
 
-    // 1. Allowlist projection from raw response
+    // 2. Allowlist projection from raw response
     const projectedMeta = BitbucketAllowlistProjector.projectMetadata(rawRev.metadata, privacy.remove_author);
     const projectedCommits = BitbucketAllowlistProjector.projectCommits(rawRev.commits, privacy.max_commit_subjects);
     const projectedDiffstat = BitbucketAllowlistProjector.projectDiffstat(rawRev.diffstat);
 
-    // 2. Sanitize Title & Description & Commits
+    // 3. Sanitize Title & Description & Commits
     const sanitizedTitle = SecretScanner.scanAndRedact(PIISanitizer.sanitizeText(projectedMeta.title, tracker), tracker);
     const sanitizedDesc = SecretScanner.scanAndRedact(PIISanitizer.sanitizeText(projectedMeta.description, tracker), tracker);
 
@@ -96,14 +75,20 @@ export class DataStore {
       config.ticket_prefix
     );
 
-    // 3. Process Files & Build Manifest + File Details
+    // 4. Parse unified diff
+    const parsedDiff = DiffParser.parse(rawRev.rawDiff || '');
+
+    // 5. Process Files & Build V4 Index & Changes
     let totalAdditions = 0;
     let totalDeletions = 0;
-    const manifestFiles: PRManifestV3['files'] = [];
-    const fileDetails: PRFileDetailV3[] = [];
 
-    let hasFunctionalChange = false;
-    let containsCommentsOnly = true;
+    const fileEntries: FileIndexEntryV4[] = [];
+    const fileChangesMap = new Map<string, { change: FileChangeV4; diffContent: string }>();
+
+    const kindCounts: Record<string, number> = {};
+    const allRiskTagsSet = new Set<string>();
+    const importantFileIds: string[] = [];
+    let riskyFilesCount = 0;
 
     projectedDiffstat.forEach((item, idx) => {
       const fileIndex = idx + 1;
@@ -114,234 +99,177 @@ export class DataStore {
       totalDeletions += item.lines_removed;
 
       const isSensitive = SensitiveFilePolicy.isSensitiveFile(originalPath);
-      const riskTags: string[] = [];
+      if (isSensitive) tracker.recordOmittedFile();
+
+      // Find parsed diff file matching this path
+      const matchedDiff = parsedDiff.files.find(f => f.newPath === originalPath || f.oldPath === originalPath) || {
+        oldPath: item.old_path || null,
+        newPath: item.new_path || originalPath,
+        status: item.status as any,
+        isBinary: false,
+        additions: item.lines_added,
+        deletions: item.lines_removed,
+        hunks: [],
+        headerLines: []
+      };
+
+      const classification = ChangeClassifier.classify(matchedDiff);
+      const risk = RiskAnalyzer.analyze(matchedDiff, classification);
+      const symbols = SymbolExtractor.extractSymbols(matchedDiff, classification.kind === 'comment_only');
 
       if (isSensitive) {
-        riskTags.push('sensitive_configuration_changed');
-        tracker.recordOmittedFile();
-      }
-      if (originalPath.includes('Controller')) riskTags.push('public_api');
-      if (originalPath.includes('Migration') || originalPath.endsWith('.sql')) riskTags.push('database_schema');
-      if (originalPath.endsWith('.proto')) riskTags.push('grpc_contract');
-
-      const sanitizedPathValue = PathSanitizer.sanitize(originalPath, privacy.file_path_mode, fileIdStr);
-
-      const changeTypes: string[] = [];
-      if (item.lines_added > 0 && item.lines_removed === 0) changeTypes.push('added_lines');
-      else if (item.lines_removed > 0 && item.lines_added === 0) changeTypes.push('removed_lines');
-      else changeTypes.push('modified_lines');
-
-      if (!isSensitive) {
-        hasFunctionalChange = true;
-        containsCommentsOnly = false;
+        risk.tags.push('sensitive_configuration');
+        risk.level = 'high';
+        risk.evidence.push('File contains sensitive security configuration');
       }
 
-      manifestFiles.push({
+      kindCounts[classification.kind] = (kindCounts[classification.kind] || 0) + 1;
+      risk.tags.forEach(t => allRiskTagsSet.add(t));
+      if (risk.level === 'high' || risk.level === 'critical') {
+        riskyFilesCount++;
+        importantFileIds.push(fileIdStr);
+      }
+
+      const sanitizedPath = PathSanitizer.sanitize(originalPath, privacy.file_path_mode, fileIdStr);
+
+      fileEntries.push({
         id: fileIdStr,
-        category: this.getCategoryForPath(originalPath),
-        status: item.status,
-        change_types: changeTypes,
-        risk_tags: riskTags
+        path: sanitizedPath,
+        old_path: item.old_path ? PathSanitizer.sanitize(item.old_path, privacy.file_path_mode, fileIdStr) : null,
+        language: this.getLanguageForPath(originalPath),
+        status: item.status as any,
+        additions: item.lines_added,
+        deletions: item.lines_removed,
+        change_kind: classification.kind,
+        risk_tags: risk.tags,
+        detail_ref: `files/${fileIdStr}/change.json`
       });
 
-      // Build File Detail
-      const fileDetail: PRFileDetailV3 = {
-        schema_version: '3.0',
-        document_type: 'pr_file_detail',
+      // Construct file patch.diff text
+      let patchDiff = matchedDiff.headerLines.join('\n') + '\n';
+      for (const hunk of matchedDiff.hunks) {
+        patchDiff += hunk.header + '\n';
+        for (const line of hunk.lines) {
+          const prefix = line.type === 'add' ? '+' : line.type === 'delete' ? '-' : ' ';
+          patchDiff += prefix + line.content + '\n';
+        }
+      }
+      patchDiff = SecretScanner.scanAndRedact(patchDiff, tracker);
+
+      const fileChange: FileChangeV4 = {
+        schema_version: '4.0',
         file_id: fileIdStr,
-        path: {
-          mode: privacy.file_path_mode,
-          value: sanitizedPathValue
+        classification: {
+          kind: classification.kind,
+          functional_change: classification.functionalChange,
+          confidence: classification.confidence,
+          evidence: classification.evidence
         },
-        language: this.getLanguageForPath(originalPath),
-        status: item.status,
-        stats: {
-          additions: item.lines_added,
-          deletions: item.lines_removed
-        },
-        symbols: [],
-        changes: isSensitive
-          ? []
-          : [
-              {
-                kind: changeTypes[0] || 'modified',
-                functional_change: !isSensitive
-              }
-            ],
-        risk_tags: riskTags,
-        content_omitted: isSensitive ? true : undefined,
-        redaction: {
-          content_modified: true,
-          reasons: isSensitive ? ['sensitive_file_content_omitted'] : ['secret_scanned']
+        symbols,
+        risk,
+        patch_ref: 'patch.diff',
+        context_ref: null,
+        redaction_result: {
+          scanned: true,
+          content_modified: isSensitive
         }
       };
 
-      fileDetails.push(fileDetail);
+      fileChangesMap.set(fileIdStr, { change: fileChange, diffContent: patchDiff });
     });
 
-    const changeType = containsCommentsOnly
-      ? 'comment_only'
-      : manifestFiles.some(f => f.risk_tags.includes('database_schema'))
-      ? 'database_migration'
-      : manifestFiles.some(f => f.risk_tags.includes('grpc_contract'))
-      ? 'grpc_contract'
-      : 'functional_logic';
+    // Primary Kind Calculation
+    let primaryKind = 'functional_logic';
+    let maxCount = 0;
+    for (const [k, count] of Object.entries(kindCounts)) {
+      if (count > maxCount) {
+        maxCount = count;
+        primaryKind = k;
+      }
+    }
 
-    const cacheKey = CacheIndex.generateCacheKey(
+    // Determine Overall Risk Level
+    let overallLevel: RiskLevel = 'none';
+    if (allRiskTagsSet.has('auth_security') || allRiskTagsSet.has('database_schema')) {
+      overallLevel = 'high';
+    } else if (allRiskTagsSet.has('public_api') || allRiskTagsSet.has('secret_config')) {
+      overallLevel = 'medium';
+    } else if (allRiskTagsSet.size > 0) {
+      overallLevel = 'low';
+    }
+
+    const coverageData: PRCoverageV4 = {
+      schema_version: '4.0',
+      sections: {
+        metadata: { status: 'complete', truncated: false, items_fetched: 1, warning: null },
+        commits: { status: 'complete', truncated: false, items_fetched: projectedCommits.length, warning: null },
+        diffstat: { status: 'complete', truncated: false, items_fetched: projectedDiffstat.length, warning: null },
+        diff: { status: 'complete', truncated: false, items_fetched: parsedDiff.files.length, warning: null },
+        file_analysis: { status: 'complete', truncated: false, items_fetched: fileEntries.length, warning: null },
+        symbols: { status: 'complete', truncated: false, items_fetched: Array.from(fileChangesMap.values()).reduce((sum, f) => sum + f.change.symbols.length, 0), warning: null },
+        comments: { status: 'not_fetched', truncated: false, items_fetched: 0, warning: null },
+        ci: { status: 'not_fetched', truncated: false, items_fetched: 0, warning: null },
+        related_context: { status: 'not_fetched', truncated: false, items_fetched: 0, warning: null }
+      }
+    };
+
+    const manifestData = {
+      title: sanitizedTitle,
+      description: sanitizedDesc,
+      state: projectedMeta.state || 'OPEN',
+      is_draft: false,
+      source_branch: projectedMeta.source.branch.name,
+      target_branch: projectedMeta.destination.branch.name,
+      source_commit: rawRev.sourceHash,
+      target_commit: rawRev.destinationHash,
+      ticket_id: ticketId !== 'N/A' ? ticketId : null,
+      change_summary: {
+        total_files: fileEntries.length,
+        total_additions: totalAdditions,
+        total_deletions: totalDeletions,
+        primary_kind: primaryKind,
+        kind_counts: kindCounts
+      },
+      risk_summary: {
+        overall_level: overallLevel,
+        total_risk_tags: Array.from(allRiskTagsSet),
+        risky_files_count: riskyFilesCount
+      },
+      stats: {
+        files_changed: fileEntries.length,
+        commits_count: projectedCommits.length
+      },
+      important_file_ids: importantFileIds,
+      index_refs: {
+        files_index: 'files.index.jsonl',
+        commits: 'commits.jsonl',
+        coverage: 'coverage.json'
+      },
+      redaction_summary: {
+        scanned: true,
+        redacted_items_count: tracker.getReport(privacy.mode).redacted_values
+      },
+      analyzer_version: '4.0.0'
+    };
+
+    const commitsJsonl = projectedCommits.map(c => JSON.stringify(c));
+
+    const result = RevisionWriter.writeRevision(
       workspace,
       repoSlug,
       prId,
       rawRev.sourceHash,
       rawRev.destinationHash,
-      config
+      manifestData,
+      fileEntries,
+      fileChangesMap,
+      commitsJsonl,
+      coverageData
     );
 
-    const redactionReport = tracker.getReport(privacy.mode);
+    const cacheKey = `bitbucket:${workspace}:${repoSlug}:${prId}:${rawRev.sourceHash.substring(0, 7)}:${rawRev.destinationHash.substring(0, 7)}:v4`;
 
-    const manifest: PRManifestV3 = {
-      schema_version: '3.0',
-      document_type: 'pr_manifest',
-      repository_id: repoId,
-      pr: {
-        id: prId,
-        ticket_id: ticketId === 'N/A' ? null : ticketId,
-        title: sanitizedTitle,
-        state: projectedMeta.state,
-        draft: Boolean(projectedMeta.draft)
-      },
-      revision: {
-        id: revId
-      },
-      change_summary: {
-        type: changeType,
-        functional_change: hasFunctionalChange,
-        risk_level: manifestFiles.some(f => f.risk_tags.includes('sensitive_configuration_changed')) ? 'high' : 'low',
-        confidence: 0.98
-      },
-      stats: {
-        commits: commitSubjects.length,
-        files: manifestFiles.length,
-        additions: totalAdditions,
-        deletions: totalDeletions
-      },
-      files: manifestFiles,
-      coverage: {
-        metadata: rawRev.coverage.metadata,
-        commits: rawRev.coverage.commits,
-        diffstat: rawRev.coverage.diffstat,
-        diff: rawRev.coverage.diff,
-        comments: 'not_fetched',
-        ci: 'not_fetched'
-      },
-      redaction: {
-        mode: redactionReport.mode,
-        pii_removed: redactionReport.pii_removed,
-        secrets_scanned: redactionReport.secrets_scanned,
-        redacted_values: redactionReport.redacted_values
-      },
-      generated_at: new Date().toISOString()
-    };
-
-    // 4. Always save manifest.json and compressed file details to disk
-    const manifestPath = path.join(revDir, 'manifest.json');
-    AtomicWriter.writeFileSync(manifestPath, StableSerializer.stringify(manifest));
-
-    for (const fileDetail of fileDetails) {
-      const filePath = path.join(filesDir, `${fileDetail.file_id}.json.gz`);
-      AtomicWriter.writeGzipSync(filePath, StableSerializer.stringify(fileDetail));
-    }
-
-    // 5. Update current.json
-    const relativeRevPath = path.relative(prDir, revDir).replace(/\\/g, '/');
-    const currentData = {
-      schema_version: 3,
-      pr_id: prId,
-      repository_id: repoId,
-      revision_id: revId,
-      revision_path: relativeRevPath,
-      last_checked_at: new Date().toISOString(),
-      status: 'complete'
-    };
-    AtomicWriter.writeFileSync(path.join(prDir, 'current.json'), JSON.stringify(currentData, null, 2));
-
-    // 6. Direct Export to output/ directory (Always enabled)
-    DataStore.exportRawToOutput(workspace, repoSlug, prId, rawRev, ticketId, manifest);
-
-    return { cacheKey, manifest };
-  }
-
-  /**
-   * Exports PR data JSON directly to ./output/ directory.
-   */
-  static exportRawToOutput(
-    workspace: string,
-    repoSlug: string,
-    prId: number,
-    rawRev: RawPRRevision,
-    ticketId?: string,
-    manifest?: any
-  ): string {
-    const outputDir = path.resolve(process.cwd(), 'output');
-    if (!fs.existsSync(outputDir)) {
-      fs.mkdirSync(outputDir, { recursive: true });
-    }
-
-    const ticketStr = ticketId && ticketId !== 'N/A' ? `${ticketId}_` : '';
-    const safeWorkspace = workspace.toLowerCase();
-    const safeRepo = repoSlug.toLowerCase();
-    const fileName = `pr_${ticketStr}${safeWorkspace}_${safeRepo}_pr${prId}.json`;
-    const filePath = path.join(outputDir, fileName);
-
-    const exportData = {
-      workspace,
-      repoSlug,
-      prId,
-      ticket_id: ticketId || 'N/A',
-      manifest,
-      source_hash: rawRev.sourceHash,
-      destination_hash: rawRev.destinationHash,
-      metadata: rawRev.metadata,
-      commits: rawRev.commits,
-      diffstat: rawRev.diffstat,
-      raw_diff: rawRev.rawDiff,
-      coverage: rawRev.coverage,
-      warnings: rawRev.warnings,
-      exported_at: new Date().toISOString()
-    };
-
-    AtomicWriter.writeFileSync(filePath, JSON.stringify(exportData, null, 2));
-    return filePath;
-  }
-
-  /**
-   * Reads compressed file details for a specific file_id.
-   */
-  static getFileDetail(workspace: string, repoSlug: string, prId: number, fileIdStr: string | number): PRFileDetailV3 | null {
-    const active = this.getActiveRevision(workspace, repoSlug, prId);
-    if (!active) return null;
-
-    const formattedId = typeof fileIdStr === 'number' ? `file_${String(fileIdStr).padStart(4, '0')}` : fileIdStr;
-    const prDir = this.getPRDir(workspace, repoSlug, prId);
-    const filePath = path.join(prDir, active.current.revision_path, 'files', `${formattedId}.json.gz`);
-
-    if (!fs.existsSync(filePath)) return null;
-
-    try {
-      const rawJson = AtomicWriter.readGzipSync(filePath);
-      return JSON.parse(rawJson);
-    } catch {
-      return null;
-    }
-  }
-
-  private static getCategoryForPath(filePath: string): string {
-    const lower = filePath.toLowerCase();
-    if (lower.includes('controller')) return 'api_controller';
-    if (lower.includes('service') || lower.includes('usecase')) return 'business_logic';
-    if (lower.includes('migration') || lower.endsWith('.sql')) return 'database_schema';
-    if (lower.endsWith('.proto')) return 'grpc_contract';
-    if (lower.includes('test') || lower.includes('spec')) return 'unit_test';
-    return 'general';
+    return { cacheKey, manifest: result.manifest };
   }
 
   private static getLanguageForPath(filePath: string): string {
@@ -350,12 +278,13 @@ export class DataStore {
       case '.cs': return 'csharp';
       case '.ts': return 'typescript';
       case '.js': return 'javascript';
-      case '.go': return 'go';
       case '.py': return 'python';
+      case '.go': return 'go';
       case '.sql': return 'sql';
       case '.proto': return 'protobuf';
       case '.json': return 'json';
-      case '.yml': case '.yaml': return 'yaml';
+      case '.yaml': case '.yml': return 'yaml';
+      case '.md': return 'markdown';
       default: return 'text';
     }
   }

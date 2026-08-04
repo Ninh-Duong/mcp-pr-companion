@@ -23,10 +23,10 @@ export class PRDetailScreen {
     const active = DataStore.getActiveRevision(workspace, repoSlug, prId);
     if (active && active.manifest) {
       return {
-        commits: active.manifest.stats.commits,
-        files: active.manifest.stats.files,
-        additions: active.manifest.stats.additions,
-        deletions: active.manifest.stats.deletions,
+        commits: active.manifest.stats.commits_count,
+        files: active.manifest.stats.files_changed,
+        additions: active.manifest.change_summary.total_additions,
+        deletions: active.manifest.change_summary.total_deletions,
         comments: 0
       };
     }
@@ -55,43 +55,37 @@ export class PRDetailScreen {
         };
       }
     } catch {
-      // Fallback on error
+      // Fallback on network failure
     }
 
     return { commits: 0, files: 0, additions: 0, deletions: 0, comments: 0 };
   }
 
-  static async displayDetail(pr: DiscoveredPR): Promise<void> {
-    console.log('\nLazy-loading PR statistics...');
+  static async render(pr: DiscoveredPR): Promise<'back' | 'sync'> {
+    console.clear();
+    console.log(`\n================================================================`);
+    console.log(`PR #${pr.id}: ${pr.title}`);
+    console.log(`================================================================`);
+    console.log(`Branch      : ${pr.sourceBranch} -> ${pr.targetBranch}`);
+    console.log(`Author      : ${pr.authorUuid || 'Unknown'}`);
+    console.log(`State       : ${pr.state}`);
+    console.log(`Updated At  : ${new Date(pr.updatedOn).toLocaleString()}`);
+
     const stats = await this.fetchPRDetailStats(pr.id);
+    console.log(`\nStats Summary:`);
+    console.log(`  - Commits : ${stats.commits}`);
+    console.log(`  - Files   : ${stats.files}`);
+    console.log(`  - Lines   : +${stats.additions} / -${stats.deletions}`);
+    console.log(`----------------------------------------------------------------\n`);
 
-    while (true) {
-      console.clear();
-      console.log('========================================================');
-      console.log(`PR #${pr.id}`);
-      console.log('========================================================');
-      console.log(`Title:       ${pr.title}`);
-      console.log(`State:       ${pr.state} ${pr.isDraft ? '(Draft)' : ''}`);
-      console.log(`Source:      ${pr.sourceBranch}`);
-      console.log(`Target:      ${pr.targetBranch}`);
-      console.log(`Updated:     ${pr.updatedOn}`);
-      console.log(`Commits:     ${stats.commits}`);
-      console.log(`Files:       ${stats.files}`);
-      console.log(`Additions:   ${stats.additions}`);
-      console.log(`Deletions:   ${stats.deletions}`);
-      console.log(`Cache State: ${pr.cacheStatus}`);
-      console.log('========================================================\n');
+    const action = await select({
+      message: 'Select action for this PR:',
+      choices: [
+        { name: '🔄 Sync / Re-fetch PR Context Data', value: 'sync' },
+        { name: '⬅️ Back to PR List', value: 'back' }
+      ]
+    });
 
-      const action = await select({
-        message: 'Actions:',
-        choices: [
-          { name: '1. Back', value: 'back' }
-        ]
-      });
-
-      if (action === 'back') {
-        return;
-      }
-    }
+    return action;
   }
 }

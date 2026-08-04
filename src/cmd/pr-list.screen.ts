@@ -1,78 +1,79 @@
 import { select } from '@inquirer/prompts';
-import { DiscoveredPR } from '../core/discovery/pr-list.normalizer.js';
-import { DiscoveryCache } from '../core/discovery/discovery-cache.js';
 import { PRDiscoveryService } from '../core/discovery/pr-discovery.service.js';
+import { DiscoveryCache } from '../core/discovery/discovery-cache.js';
 import { runtimeSession } from '../core/auth/runtime-session.js';
 import { PRDetailScreen } from './pr-detail.screen.js';
 
 export class PRListScreen {
-  static formatRelativeTime(dateStr: string): string {
-    const diffMs = Date.now() - new Date(dateStr).getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    if (diffMins < 60) return `${diffMins} minutes ago`;
-    const diffHours = Math.floor(diffMins / 60);
-    if (diffHours < 24) return `${diffHours} hours ago`;
-    const diffDays = Math.floor(diffHours / 24);
-    return `${diffDays} days ago`;
-  }
-
-  static renderPRList(prs: DiscoveredPR[]): void {
-    console.clear();
-    console.log('========================================================');
-    console.log('                MY OPEN PULL REQUESTS                   ');
-    console.log('========================================================\n');
-
-    if (prs.length === 0) {
-      console.log('No open pull requests found for your account.\n');
+  static async render(): Promise<void> {
+    const session = runtimeSession.getSession();
+    if (!session) {
+      console.error('No active session.');
       return;
     }
 
-    prs.forEach((pr, index) => {
-      const draftLabel = pr.isDraft ? 'Draft ' : 'Open ';
-      const updatedText = this.formatRelativeTime(pr.updatedOn);
-      console.log(`[${index + 1}] #${pr.id} ${pr.title}`);
-      console.log(`    ${draftLabel}${pr.sourceBranch} → ${pr.targetBranch}`);
-      console.log(`    Updated: ${updatedText} | Local cache: ${pr.cacheStatus}\n`);
-    });
-  }
-
-  static async displayMenu(): Promise<void> {
-    const session = runtimeSession.getSession();
-    if (!session) return;
-
-    let prs = DiscoveryCache.getPRs();
+    const { workspace, repoSlug } = session.repository;
 
     while (true) {
-      this.renderPRList(prs);
+      console.clear();
+      console.log(`\n================================================================`);
+      console.log(`Pull Requests for ${workspace}/${repoSlug}`);
+      console.log(`================================================================`);
 
-      const action = await select({
-        message: 'Actions:',
+      let prs = DiscoveryCache.getPRs();
+
+      if (prs.length === 0) {
+        console.log('Fetching open Pull Requests from Bitbucket API...');
+        try {
+          prs = await PRDiscoveryService.discoverOpenPRs(
+            session.email,
+            session.token,
+            workspace,
+            repoSlug,
+            ''
+          );
+        } catch (err: any) {
+          console.error(`Failed to fetch PR list: ${err.message || String(err)}`);
+          await new Promise(r => setTimeout(r, 2000));
+          return;
+        }
+      }
+
+      console.log(`Found ${prs.length} open PR(s):\n`);
+
+      prs.forEach((pr) => {
+        const cacheStatus = DiscoveryCache.evaluateCacheStatus(
+          workspace,
+          repoSlug,
+          pr.id,
+          pr.updatedOn
+        );
+        const statusBadge =
+          cacheStatus === 'Cached' ? '[CACHED]' : cacheStatus === 'Outdated' ? '[OUTDATED]' : '[MISSING]';
+        console.log(`  ${statusBadge} #${pr.id}: ${pr.title} (${pr.sourceBranch} -> ${pr.targetBranch})`);
+      });
+
+      console.log(`----------------------------------------------------------------\n`);
+
+      const choice = await select({
+        message: 'Select action:',
         choices: [
-          { name: '1. Refresh', value: 'refresh' },
-          { name: '2. View PR details', value: 'view_details' },
-          { name: '3. Back', value: 'back' }
+          { name: '🔍 View PR Detail / Sync', value: 'view' },
+          { name: '🔄 Refresh PR List from Bitbucket', value: 'refresh' },
+          { name: '⬅️ Back to Main Menu', value: 'back' }
         ]
       });
 
-      if (action === 'back') {
+      if (choice === 'back') {
         return;
       }
 
-      if (action === 'refresh') {
-        console.log('\nRefreshing pull requests...');
-        prs = await PRDiscoveryService.discoverOpenPRs(
-          session.email,
-          session.token,
-          session.repository.workspace,
-          session.repository.repoSlug,
-          session.currentUserUuid
-        );
-      } else if (action === 'view_details') {
-        if (prs.length === 0) {
-          console.log('\nNo pull requests to view.');
-          continue;
-        }
+      if (choice === 'refresh') {
+        DiscoveryCache.clear();
+        continue;
+      }
 
+      if (choice === 'view') {
         const prChoices = prs.map((pr) => ({
           name: `#${pr.id} ${pr.title}`,
           value: pr.id
@@ -85,7 +86,7 @@ export class PRListScreen {
 
         const selectedPr = prs.find(p => p.id === selectedPrId);
         if (selectedPr) {
-          await PRDetailScreen.displayDetail(selectedPr);
+          await PRDetailScreen.render(selectedPr);
         }
       }
     }

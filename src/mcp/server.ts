@@ -7,7 +7,7 @@ import { runHealthCheck } from '../healthcheck/healthcheck.js';
 import { Logger } from '../utils/logger.js';
 
 async function startServer() {
-  Logger.info('Starting mcp-pr-companion Local MCP Server...');
+  Logger.info('Starting mcp-pr-companion Local MCP Server v4.0...');
 
   // Perform quick pre-flight healthcheck
   const health = runHealthCheck();
@@ -18,7 +18,7 @@ async function startServer() {
   const server = new Server(
     {
       name: 'mcp-pr-companion',
-      version: '2.0.0'
+      version: '4.0.0'
     },
     {
       capabilities: {
@@ -46,7 +46,7 @@ async function startServer() {
         },
         {
           name: 'get_pr_manifest',
-          description: 'Retrieves compact agent-ready manifest for a synced Bitbucket PR (minimal token footprint ~2-4KB). Serves from local cache/disk.',
+          description: 'Retrieves compact Schema v4 agent-ready manifest for a synced Bitbucket PR (minimal token footprint ~1-4KB). Serves from local disk/RAM cache.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -58,14 +58,33 @@ async function startServer() {
         },
         {
           name: 'get_pr_file_changes',
-          description: 'Retrieves specific file change details (AST highlights, risk tags) by file_id for a synced Bitbucket PR.',
+          description: 'Retrieves specific file change details, AST symbols, risk evidence, and diff patch by file_id (string format, e.g. "file_0001").',
           inputSchema: {
             type: 'object',
             properties: {
               pr_url: { type: 'string', description: 'Full Bitbucket PR URL.' },
-              file_id: { type: 'number', description: 'Numeric file ID from get_pr_manifest list.' }
+              file_id: { type: 'string', description: 'File ID string from manifest file list (e.g. "file_0001"). Numeric fallback supported.' },
+              include_patch: { type: 'boolean', description: 'Include raw patch.diff content. Defaults to true.' },
+              max_bytes: { type: 'number', description: 'Maximum patch bytes limit before truncating. Defaults to 16000.' }
             },
             required: ['pr_url', 'file_id']
+          }
+        },
+        {
+          name: 'search_pr_files',
+          description: 'Searches changed files in a PR with filters (path, language, status, change_kind, risk_tag).',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              pr_url: { type: 'string', description: 'Full Bitbucket PR URL.' },
+              path: { type: 'string', description: 'Filter files matching path string.' },
+              language: { type: 'string', description: 'Filter files matching language.' },
+              status: { type: 'string', description: 'Filter status (added, modified, deleted, renamed).' },
+              change_kind: { type: 'string', description: 'Filter change kind (comment_only, functional_logic, configuration, etc.).' },
+              risk_tag: { type: 'string', description: 'Filter files with specific risk tag (public_api, auth_security, etc.).' },
+              limit: { type: 'number', description: 'Maximum number of results to return. Defaults to 50.' }
+            },
+            required: ['pr_url']
           }
         },
         {
@@ -107,25 +126,36 @@ async function startServer() {
       if (name === 'get_pr_manifest') {
         const { pr_url, refresh } = (args || {}) as any;
         const manifest = await PRContextService.getManifest(pr_url, Boolean(refresh));
-        return { content: [{ type: 'text', text: JSON.stringify(manifest) }] };
+        return { content: [{ type: 'text', text: JSON.stringify(manifest, null, 2) }] };
       }
 
       if (name === 'get_pr_file_changes') {
-        const { pr_url, file_id } = (args || {}) as any;
-        const detail = await PRContextService.getFileDetail(pr_url, Number(file_id));
-        return { content: [{ type: 'text', text: JSON.stringify(detail || { error: 'File detail not found' }) }] };
+        const { pr_url, file_id, include_patch, max_bytes } = (args || {}) as any;
+        const detail = await PRContextService.getFileChange(
+          pr_url,
+          file_id,
+          include_patch !== false,
+          max_bytes || 16000
+        );
+        return { content: [{ type: 'text', text: JSON.stringify(detail || { error: 'File detail not found' }, null, 2) }] };
+      }
+
+      if (name === 'search_pr_files') {
+        const { pr_url, path, language, status, change_kind, risk_tag, limit } = (args || {}) as any;
+        const result = PRContextService.searchPRFiles(pr_url, { path, language, status, change_kind, risk_tag, limit });
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
       }
 
       if (name === 'get_pr_sync_status') {
         const { pr_url } = (args || {}) as any;
         const status = PRContextService.getSyncStatus(pr_url);
-        return { content: [{ type: 'text', text: JSON.stringify(status) }] };
+        return { content: [{ type: 'text', text: JSON.stringify(status, null, 2) }] };
       }
 
       if (name === 'refresh_pr_data') {
         const { pr_url } = (args || {}) as any;
         const manifest = await PRContextService.refreshPRData(pr_url);
-        return { content: [{ type: 'text', text: JSON.stringify(manifest) }] };
+        return { content: [{ type: 'text', text: JSON.stringify(manifest, null, 2) }] };
       }
 
       throw new Error(`Tool not found: ${name}`);
@@ -145,7 +175,7 @@ async function startServer() {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  Logger.info('mcp-pr-companion MCP Server is running over stdio transport.');
+  Logger.info('mcp-pr-companion MCP Server v4.0 is running over stdio transport.');
 }
 
 startServer().catch((err) => {
