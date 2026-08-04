@@ -42,7 +42,7 @@ export class DataStore {
     repoSlug: string,
     prId: number,
     rawRev: RawPRRevision
-  ): { cacheKey: string; manifest: PRManifestV4 } {
+  ): { cacheKey: string; manifest: PRManifestV4; revisionId: string } {
     const config = ConfigManager.loadBase();
     const privacy = config.privacy;
     const tracker = new RedactionTracker();
@@ -269,7 +269,7 @@ export class DataStore {
 
     const cacheKey = `bitbucket:${workspace}:${repoSlug}:${prId}:${rawRev.sourceHash.substring(0, 7)}:${rawRev.destinationHash.substring(0, 7)}:v4`;
 
-    return { cacheKey, manifest: result.manifest };
+    return { cacheKey, manifest: result.manifest, revisionId: result.revisionId };
   }
 
   private static getLanguageForPath(filePath: string): string {

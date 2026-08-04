@@ -1,3 +1,4 @@
+import { pathToFileURL } from 'url';
 import { SecureShutdown } from '../core/auth/secure-shutdown.js';
 import { LoginScreen } from './login.screen.js';
 import { PRDiscoveryService } from '../core/discovery/pr-discovery.service.js';
@@ -29,9 +30,16 @@ export async function runCMD(): Promise<void> {
 }
 
 // Execute runner if executed directly
-if (import.meta.url === `file:///${process.argv[1].replace(/\\/g, '/')}`) {
+const isDirectExecution =
+  process.argv[1] &&
+  (import.meta.url === pathToFileURL(process.argv[1]).href ||
+    process.argv[1].endsWith('cmd.runner.ts') ||
+    process.argv[1].endsWith('cmd.runner.js'));
+
+if (isDirectExecution) {
   runCMD().catch((err) => {
     console.error('Fatal CLI Error:', err);
     process.exit(1);
   });
 }
+

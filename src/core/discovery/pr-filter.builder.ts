@@ -1,13 +1,13 @@
-export class PRFilterBuilder {
-  static buildQuery(currentUserUuid?: string): string {
-    const filters: string[] = ['state="OPEN"'];
+import { normalizeUuid } from '../auth/current-user.resolver.js';
 
-    if (currentUserUuid) {
-      // Bitbucket query syntax: author.uuid="{uuid}"
-      const sanitizedUuid = currentUserUuid.replace(/[{}]/g, '');
-      filters.push(`author.uuid="{${sanitizedUuid}}"`);
+export class PRFilterBuilder {
+  static buildQuery(currentUserUuid: string): string {
+    const normalized = normalizeUuid(currentUserUuid);
+    if (!normalized) {
+      throw new Error('Authenticated user UUID is required for PR discovery query generation.');
     }
 
-    return filters.join(' AND ');
+    // Bitbucket query syntax: state="OPEN" AND author.uuid="{uuid}"
+    return `state="OPEN" AND author.uuid="{${normalized}}"`;
   }
 }
