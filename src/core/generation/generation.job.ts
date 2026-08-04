@@ -31,15 +31,6 @@ export class GenerationJob {
 
     updateStage('revision_check', 5);
 
-    if (!forceRefresh) {
-      const decision = CacheDecisionService.evaluate(workspace, repoSlug, prId);
-      if (decision.decision === 'cache_hit') {
-        jobState.status = 'cached';
-        updateStage('complete', 100);
-        return { success: true, isCached: true };
-      }
-    }
-
     try {
       const collector = new BitbucketCollector(email, token);
 

@@ -8,25 +8,21 @@ export class SyncMenu {
     let running = true;
     while (running) {
       const choice = await select({
-        message: '🔄 Sync PR Data Menu',
+        message: '🔄 Generate & Export PR Data Menu',
         choices: [
-          { name: '1. Sync All PRs', value: 'sync_all' },
-          { name: '2. Select PRs to Sync', value: 'sync_select' },
-          { name: '3. Force Refresh (Bypass cache checks)', value: 'force_refresh' },
-          { name: '4. Show Last Sync Summary', value: 'summary' },
-          { name: '5. Back to Main Menu', value: 'back' }
+          { name: '1. Export All PRs to /output', value: 'sync_all' },
+          { name: '2. Select PRs to Export to /output', value: 'sync_select' },
+          { name: '3. Show Last Export Summary', value: 'summary' },
+          { name: '4. Back to Main Menu', value: 'back' }
         ]
       });
 
       switch (choice) {
         case 'sync_all':
-          await this.runSync(PRRegistry.list(), false);
+          await this.runSync(PRRegistry.list(), true);
           break;
         case 'sync_select':
           await this.syncSelected();
-          break;
-        case 'force_refresh':
-          await this.runForceRefresh();
           break;
         case 'summary':
           this.showSummary();
