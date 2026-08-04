@@ -64,16 +64,7 @@ export class SyncJob {
       ? rawRev.metadata.title.match(/([A-Z]+-\d+)/)?.[1]
       : undefined;
 
-    // Check if source commit hash has not changed and forceRefresh is false (Cache Hit check)
-    if (!this.options.forceRefresh) {
-      const active = DataStore.getActiveRevision(parsed.workspace, parsed.repoSlug, parsed.prId);
-      if (active && active.current.source_hash === rawRev.sourceHash && active.current.status === 'complete') {
-        DataStore.exportRawToOutput(parsed.workspace, parsed.repoSlug, parsed.prId, rawRev, ticketId);
-        emit('complete', 100, 'Complete (cache hit & exported to output/)', undefined, ticketId);
-        return { status: 'cached', ticketId, sourceHash: rawRev.sourceHash };
-      }
-    }
-
+    // Fetch commits, diffstat, and analyze diff
     emit('fetching_commits', 30, 'Fetching commit history', undefined, ticketId);
     emit('fetching_diffstat', 45, 'Fetching diffstat', undefined, ticketId);
     emit('downloading_diff', 60, 'Downloading diff', undefined, ticketId);

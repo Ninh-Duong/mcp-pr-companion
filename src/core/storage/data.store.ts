@@ -242,32 +242,13 @@ export class DataStore {
       generated_at: new Date().toISOString()
     };
 
-    // 4. Deterministic Hash Check to avoid unnecessary disk re-writes
+    // 4. Always save manifest.json and compressed file details to disk
     const manifestPath = path.join(revDir, 'manifest.json');
-    let shouldWrite = true;
+    AtomicWriter.writeFileSync(manifestPath, StableSerializer.stringify(manifest));
 
-    if (fs.existsSync(manifestPath)) {
-      try {
-        const existingManifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
-        const existingHash = StableSerializer.computeContentHash(existingManifest);
-        const newHash = StableSerializer.computeContentHash(manifest);
-        if (existingHash === newHash) {
-          shouldWrite = false;
-        }
-      } catch {
-        shouldWrite = true;
-      }
-    }
-
-    if (shouldWrite) {
-      // Save manifest.json
-      AtomicWriter.writeFileSync(manifestPath, StableSerializer.stringify(manifest));
-
-      // Save individual compressed file details
-      for (const fileDetail of fileDetails) {
-        const filePath = path.join(filesDir, `${fileDetail.file_id}.json.gz`);
-        AtomicWriter.writeGzipSync(filePath, StableSerializer.stringify(fileDetail));
-      }
+    for (const fileDetail of fileDetails) {
+      const filePath = path.join(filesDir, `${fileDetail.file_id}.json.gz`);
+      AtomicWriter.writeGzipSync(filePath, StableSerializer.stringify(fileDetail));
     }
 
     // 5. Update current.json
@@ -283,37 +264,22 @@ export class DataStore {
     };
     AtomicWriter.writeFileSync(path.join(prDir, 'current.json'), JSON.stringify(currentData, null, 2));
 
-    // 6. Update CacheIndex
-    CacheIndex.updateEntry({
-      cacheKey,
-      provider: 'bitbucket-cloud',
-      workspace: repoId, // Store opaque repo ID in cache index
-      repoSlug: String(prId),
-      prId,
-      sourceHash: rawRev.sourceHash,
-      destinationHash: rawRev.destinationHash,
-      revisionPath: relativeRevPath,
-      lastCheckedAt: new Date().toISOString(),
-      status: 'complete'
-    });
-
-    // 7. Debug mode persistence (only if persist_provider_raw is explicitly enabled in debug mode)
-    if (privacy.mode === 'debug' && privacy.persist_provider_raw) {
-      DataStore.exportRawToOutput(workspace, repoSlug, prId, rawRev, ticketId);
-    }
+    // 6. Direct Export to output/ directory (Always enabled)
+    DataStore.exportRawToOutput(workspace, repoSlug, prId, rawRev, ticketId, manifest);
 
     return { cacheKey, manifest };
   }
 
   /**
-   * Exports raw PR data JSON directly to ./output/ directory (only in debug mode).
+   * Exports PR data JSON directly to ./output/ directory.
    */
   static exportRawToOutput(
     workspace: string,
     repoSlug: string,
     prId: number,
     rawRev: RawPRRevision,
-    ticketId?: string
+    ticketId?: string,
+    manifest?: any
   ): string {
     const outputDir = path.resolve(process.cwd(), 'output');
     if (!fs.existsSync(outputDir)) {
@@ -323,7 +289,7 @@ export class DataStore {
     const ticketStr = ticketId && ticketId !== 'N/A' ? `${ticketId}_` : '';
     const safeWorkspace = workspace.toLowerCase();
     const safeRepo = repoSlug.toLowerCase();
-    const fileName = `raw_pr_${ticketStr}${safeWorkspace}_${safeRepo}_pr${prId}.json`;
+    const fileName = `pr_${ticketStr}${safeWorkspace}_${safeRepo}_pr${prId}.json`;
     const filePath = path.join(outputDir, fileName);
 
     const exportData = {
@@ -331,6 +297,7 @@ export class DataStore {
       repoSlug,
       prId,
       ticket_id: ticketId || 'N/A',
+      manifest,
       source_hash: rawRev.sourceHash,
       destination_hash: rawRev.destinationHash,
       metadata: rawRev.metadata,
