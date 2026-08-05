@@ -11,7 +11,13 @@ export class RetentionService {
     const maxRevisions = config.cache.max_revisions_per_pr || 3;
     const retentionDays = config.cache.retention_days || 30;
 
-    const prDir = RevisionWriter.getPROutputDir(workspace, repoSlug, prId);
+    const prDir = RevisionWriter.getPROutputDir(
+      workspace,
+      repoSlug,
+      prId,
+      config.ai_context.company,
+      config.ai_context.root
+    );
     const revisionsDir = path.join(prDir, 'revisions');
 
     if (!fs.existsSync(revisionsDir)) {

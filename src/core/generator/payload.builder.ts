@@ -7,6 +7,7 @@ import { GitExecutor } from '../git/git.executor.js';
 import { GitParser } from '../git/git.parser.js';
 import { BitbucketService } from '../bitbucket/bitbucket.service.js';
 import { Logger } from '../../utils/logger.js';
+import { StorePathResolver } from '../output/store-path.resolver.js';
 
 export interface PRPayloadOptions {
   prUrl?: string;
@@ -111,8 +112,8 @@ export class PayloadBuilder {
     // Enhance payload with Deployment/Migration Notes & Key Technical Insights
     const enhancedPayload = this.enrichPayloadData(rawPayloadData);
 
-    // Save JSON output copy to ./output/ folder with timestamp
-    const savedPath = this.savePayloadToFile(enhancedPayload, identifier);
+    // Save JSON copy alongside generated AI context artifacts.
+    const savedPath = this.savePayloadToFile(enhancedPayload, identifier, config.ai_context.root);
     enhancedPayload._metadata = {
       saved_file_path: savedPath,
       generated_at: new Date().toISOString()
@@ -205,16 +206,16 @@ export class PayloadBuilder {
     };
   }
 
-  private static savePayloadToFile(payload: any, identifier: string): string {
-    const outputDir = path.resolve(process.cwd(), 'output');
-    if (!fs.existsSync(outputDir)) {
-      fs.mkdirSync(outputDir, { recursive: true });
+  private static savePayloadToFile(payload: any, identifier: string, root?: string): string {
+    const payloadDir = path.join(StorePathResolver.resolveRoot(root), 'payloads');
+    if (!fs.existsSync(payloadDir)) {
+      fs.mkdirSync(payloadDir, { recursive: true });
     }
 
     const now = new Date();
     const timestamp = now.toISOString().replace(/[-:]/g, '').replace('T', '_').split('.')[0];
     const fileName = `description_kb_${identifier}_${timestamp}.json`;
-    const filePath = path.join(outputDir, fileName);
+    const filePath = path.join(payloadDir, fileName);
 
     fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf-8');
     return filePath;

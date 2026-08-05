@@ -16,7 +16,6 @@ session.json
 
 # Generated AI Context Packs & Data Outputs
 ai-context/
-/output/
 temp/
 scratch/
 
