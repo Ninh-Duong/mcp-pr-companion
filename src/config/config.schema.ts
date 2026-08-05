@@ -27,6 +27,13 @@ export const BaseConfigSchema = z.object({
     max_highlights_per_file: z.number().default(5),
     include_generated_files: z.boolean().default(false)
   }).default({}),
+  ai_context: z.object({
+    root: z.string().default('ai-context'),
+    company: z.string().default('siliconstack'),
+    app: z.string().default('bitbucket'),
+    feature: z.string().default('list-pr'),
+    pr_folder_template: z.string().default('{repoSlug}_PR-{prId}')
+  }).default({}),
   module_rules: z.record(z.array(z.string())).default({
     'Database & Entity Models': ['**/*Context.cs', '**/Entities/**/*.cs', '**/Models/**/*.cs', '**/*.sql', '**/migrations/**'],
     'APIs & Controllers': ['**/*Controller.cs', '**/Controllers/**/*.cs', '**/Routes/**/*.ts', '**/routes/**/*.js', '**/api/**/*.go'],

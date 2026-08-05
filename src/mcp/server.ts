@@ -32,6 +32,31 @@ async function startServer() {
     return {
       tools: [
         {
+          name: 'get_pr_context_pack',
+          description: 'PRIMARY AI ENTRYPOINT: Retrieves adaptive Markdown Context Pack (context.md) for a PR containing identity, read strategy, executive summary, changed files, and impact map.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              pr_url: { type: 'string', description: 'Full Bitbucket PR URL.' },
+              refresh: { type: 'boolean', description: 'Force re-fetching from Bitbucket API. Defaults to false.' },
+              detail_level: { type: 'string', enum: ['auto', 'skim', 'standard', 'deep'], description: 'Context detail level. Defaults to auto.' }
+            },
+            required: ['pr_url']
+          }
+        },
+        {
+          name: 'get_pr_file_context',
+          description: 'Retrieves Markdown AI detail file for a specific changed file by file_id (e.g. "file_0001") containing classification, risk evidence, symbols, hunk summary, and diff patch.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              pr_url: { type: 'string', description: 'Full Bitbucket PR URL.' },
+              file_id: { type: 'string', description: 'File ID string from manifest or context.md (e.g. "file_0001").' }
+            },
+            required: ['pr_url', 'file_id']
+          }
+        },
+        {
           name: 'generate_pr_payload',
           description: 'Extracts Bitbucket PR or local Git branch diffs, commits, and AST module categorizations into a compact JSON schema for AI PR description generation.',
           inputSchema: {
@@ -46,7 +71,7 @@ async function startServer() {
         },
         {
           name: 'get_pr_manifest',
-          description: 'Retrieves compact Schema v4 agent-ready manifest for a synced Bitbucket PR (minimal token footprint ~1-4KB). Serves from local disk/RAM cache.',
+          description: 'Retrieves compact Schema v4 JSON manifest for a synced Bitbucket PR (legacy/technical backing data). Prefer get_pr_context_pack for AI context.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -58,7 +83,7 @@ async function startServer() {
         },
         {
           name: 'get_pr_file_changes',
-          description: 'Retrieves specific file change details, AST symbols, risk evidence, and diff patch by file_id (string format, e.g. "file_0001").',
+          description: 'Retrieves specific file change details in JSON format by file_id (legacy/technical backing data). Prefer get_pr_file_context for AI context.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -119,6 +144,18 @@ async function startServer() {
     Logger.info(`CallTool requested: ${name}`);
 
     try {
+      if (name === 'get_pr_context_pack') {
+        const { pr_url, refresh, detail_level } = (args || {}) as any;
+        const markdown = await PRContextService.getContextPack(pr_url, Boolean(refresh), detail_level);
+        return { content: [{ type: 'text', text: markdown }] };
+      }
+
+      if (name === 'get_pr_file_context') {
+        const { pr_url, file_id } = (args || {}) as any;
+        const markdown = await PRContextService.getFileContext(pr_url, file_id);
+        return { content: [{ type: 'text', text: markdown }] };
+      }
+
       if (name === 'generate_pr_payload') {
         return await handleGeneratePRPayload(args);
       }

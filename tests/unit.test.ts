@@ -9,6 +9,7 @@ import { RiskAnalyzer } from '../src/core/analyzer/risk.analyzer.js';
 import { SymbolExtractor } from '../src/core/analyzer/symbol.extractor.js';
 import { RevisionWriter } from '../src/core/output/revision.writer.js';
 import { OutputReader } from '../src/core/output/output.reader.js';
+import { ContextModeClassifier } from '../src/core/analyzer/context-mode.classifier.js';
 
 let passed = 0;
 let failed = 0;
@@ -189,6 +190,36 @@ index 1234567..89abcdef 100644
 
   const loadedChangeByNum = OutputReader.getFileChange(testWs, testRepo, testPr, '1' as any);
   assert(loadedChangeByNum !== null && loadedChangeByNum.change.file_id === 'file_0001', 'OutputReader supports numeric coercion fallback for file_id (1 -> "file_0001")');
+
+  const contextMd = OutputReader.getContextPack(testWs, testRepo, testPr);
+  assert(contextMd !== null && contextMd.includes('## Read Strategy') && contextMd.includes('Mode: skim'), 'OutputReader loads adaptive AI context pack context.md with skim mode');
+  assert(contextMd !== null && Buffer.byteLength(contextMd, 'utf-8') <= 1200, 'Comment-only PR context.md is compact (<= 1.2KB)');
+
+  const filesMd = OutputReader.getFilesSummary(testWs, testRepo, testPr);
+  assert(filesMd !== null && filesMd.includes('# Files') && filesMd.includes('## Read First'), 'OutputReader loads files.md summary list');
+
+  const fileMd = OutputReader.getFileContext(testWs, testRepo, testPr, 'file_0001');
+  assert(fileMd !== null && fileMd.includes('# file_0001'), 'OutputReader loads AI file detail files/file_0001.md');
+
+  // 7. ContextModeClassifier Rules Verification
+  console.log('\n7. ContextModeClassifier Rule Evaluation:');
+  const skimClassified = ContextModeClassifier.classify(
+    {
+      change_summary: { total_files: 1, total_additions: 1, total_deletions: 1, primary_kind: 'comment_only', kind_counts: {} },
+      risk_summary: { overall_level: 'none', total_risk_tags: [], risky_files_count: 0 }
+    } as any,
+    [{ id: 'file_0001', path: 'test.cs', old_path: null, language: 'csharp', status: 'modified', additions: 1, deletions: 1, change_kind: 'comment_only', risk_tags: [], detail_ref: '' }]
+  );
+  assert(skimClassified.mode === 'skim', 'Comment-only single file PR classifies as skim mode');
+
+  const priorityClassified = ContextModeClassifier.classify(
+    {
+      change_summary: { total_files: 5, total_additions: 20, total_deletions: 5, primary_kind: 'functional_logic', kind_counts: {} },
+      risk_summary: { overall_level: 'medium', total_risk_tags: ['public_api'], risky_files_count: 1 }
+    } as any,
+    [{ id: 'file_0001', path: 'api.cs', old_path: null, language: 'csharp', status: 'modified', additions: 10, deletions: 2, change_kind: 'functional_logic', risk_tags: ['public_api'], detail_ref: '' }]
+  );
+  assert(priorityClassified.mode === 'inspect_priority_files', 'PR with public_api risk tag classifies as inspect_priority_files mode');
 
   console.log('\n================================================================');
   console.log(`Test Results: ${passed} Passed | ${failed} Failed`);

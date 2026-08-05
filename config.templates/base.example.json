@@ -22,5 +22,12 @@
     "default_detail": "manifest",
     "max_highlights_per_file": 5,
     "include_generated_files": false
+  },
+  "ai_context": {
+    "root": "ai-context",
+    "company": "siliconstack",
+    "app": "bitbucket",
+    "feature": "list-pr",
+    "pr_folder_template": "{repoSlug}_PR-{prId}"
   }
 }
