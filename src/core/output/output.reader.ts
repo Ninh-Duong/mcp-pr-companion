@@ -19,12 +19,32 @@ export interface ActiveRevisionResult {
 }
 
 export class OutputReader {
+  public static getPROutputDir(workspace: string, repoSlug: string, prId: number): string {
+    const primaryDir = RevisionWriter.getPROutputDir(workspace, repoSlug, prId);
+    if (fs.existsSync(primaryDir)) {
+      return primaryDir;
+    }
+
+    // Fallback checks for legacy paths
+    const legacyPath1 = path.resolve(process.cwd(), 'output', workspace, repoSlug, `pr_${prId}`);
+    if (fs.existsSync(legacyPath1)) {
+      return legacyPath1;
+    }
+
+    const legacyPath2 = path.resolve(process.cwd(), 'output', 'bitbucket', workspace, repoSlug, `pr_${prId}`);
+    if (fs.existsSync(legacyPath2)) {
+      return legacyPath2;
+    }
+
+    return primaryDir;
+  }
+
   static getActiveRevision(
     workspace: string,
     repoSlug: string,
     prId: number
   ): ActiveRevisionResult | null {
-    const prDir = RevisionWriter.getPROutputDir(workspace, repoSlug, prId);
+    const prDir = this.getPROutputDir(workspace, repoSlug, prId);
     const currentPath = path.join(prDir, 'current.json');
 
     if (!fs.existsSync(currentPath)) {
@@ -41,7 +61,7 @@ export class OutputReader {
   }
 
   private static resolveRevisionDir(workspace: string, repoSlug: string, prId: number, revisionId?: string): string | null {
-    const prDir = RevisionWriter.getPROutputDir(workspace, repoSlug, prId);
+    const prDir = this.getPROutputDir(workspace, repoSlug, prId);
     let targetRev = revisionId;
 
     if (!targetRev) {
@@ -69,6 +89,38 @@ export class OutputReader {
     } catch {
       return null;
     }
+  }
+
+  static getContextPack(workspace: string, repoSlug: string, prId: number): string | null {
+    const prDir = this.getPROutputDir(workspace, repoSlug, prId);
+    const contextPath = path.join(prDir, 'context.md');
+    if (fs.existsSync(contextPath)) {
+      return fs.readFileSync(contextPath, 'utf-8');
+    }
+    return null;
+  }
+
+  static getFilesSummary(workspace: string, repoSlug: string, prId: number): string | null {
+    const prDir = this.getPROutputDir(workspace, repoSlug, prId);
+    const filesPath = path.join(prDir, 'files.md');
+    if (fs.existsSync(filesPath)) {
+      return fs.readFileSync(filesPath, 'utf-8');
+    }
+    return null;
+  }
+
+  static getFileContext(workspace: string, repoSlug: string, prId: number, fileId: string | number): string | null {
+    const prDir = this.getPROutputDir(workspace, repoSlug, prId);
+    let normalizedId = String(fileId);
+    if (typeof fileId === 'number' || /^\d+$/.test(normalizedId)) {
+      normalizedId = `file_${String(fileId).padStart(4, '0')}`;
+    }
+
+    const filePath = path.join(prDir, 'files', `${normalizedId}.md`);
+    if (fs.existsSync(filePath)) {
+      return fs.readFileSync(filePath, 'utf-8');
+    }
+    return null;
   }
 
   static getFileIndex(workspace: string, repoSlug: string, prId: number, revisionId?: string): FileIndexEntryV4[] {

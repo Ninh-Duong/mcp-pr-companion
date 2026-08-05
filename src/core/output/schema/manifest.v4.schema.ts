@@ -51,7 +51,15 @@ export const PRManifestV4Schema = z.object({
     redacted_items_count: z.number()
   }),
   analyzer_version: z.string(),
-  provenance: ManifestProvenanceSchema.optional()
+  provenance: ManifestProvenanceSchema.optional(),
+  ai_reading: z.object({
+    mode: z.enum(['skim', 'standard', 'inspect_priority_files', 'deep_review']),
+    reason: z.string(),
+    required_next_files: z.array(z.string()),
+    optional_next_files: z.array(z.string()),
+    skip_categories: z.array(z.string()),
+    token_budget: z.enum(['small', 'medium', 'large', 'extensive'])
+  }).optional()
 });
 
 export type PRManifestV4 = z.infer<typeof PRManifestV4Schema>;

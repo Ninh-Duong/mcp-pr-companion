@@ -177,6 +177,53 @@ export class PRContextService {
     return this.getManifest(prUrl, true);
   }
 
+  static async getContextPack(prUrl: string, refresh = false, detailLevel?: 'auto' | 'skim' | 'standard' | 'deep'): Promise<string> {
+    const parsed = PRRegistry.parseAndValidateUrl(prUrl);
+    if (refresh) {
+      await this.refreshPRData(prUrl);
+    }
+    let context = OutputReader.getContextPack(parsed.workspace, parsed.repoSlug, parsed.prId);
+    if (!context) {
+      // If context.md doesn't exist locally yet, fetch & generate it
+      await this.getManifest(prUrl, true);
+      context = OutputReader.getContextPack(parsed.workspace, parsed.repoSlug, parsed.prId);
+    }
+
+    if (!context) {
+      return '# Error: Context pack generation failed.';
+    }
+
+    if (detailLevel === 'deep') {
+      const filesSummary = OutputReader.getFilesSummary(parsed.workspace, parsed.repoSlug, parsed.prId);
+      if (filesSummary) {
+        context += `\n\n---\n\n${filesSummary}`;
+      }
+    }
+
+    return context;
+  }
+
+  static async getFilesSummary(prUrl: string): Promise<string> {
+    const parsed = PRRegistry.parseAndValidateUrl(prUrl);
+    let summary = OutputReader.getFilesSummary(parsed.workspace, parsed.repoSlug, parsed.prId);
+    if (!summary) {
+      await this.getManifest(prUrl, false);
+      summary = OutputReader.getFilesSummary(parsed.workspace, parsed.repoSlug, parsed.prId);
+    }
+    return summary || '# Error: Files summary (files.md) not found.';
+  }
+
+  static async getFileContext(prUrl: string, fileId: string | number): Promise<string> {
+    const parsed = PRRegistry.parseAndValidateUrl(prUrl);
+    let fileContext = OutputReader.getFileContext(parsed.workspace, parsed.repoSlug, parsed.prId, fileId);
+    if (!fileContext) {
+      // Make sure PR manifest/data is available
+      await this.getManifest(prUrl, false);
+      fileContext = OutputReader.getFileContext(parsed.workspace, parsed.repoSlug, parsed.prId, fileId);
+    }
+    return fileContext || `# Error: Context for file ${fileId} not found.`;
+  }
+
   private static setManifestCache(key: string, manifest: PRManifestV4, revisionId: string): void {
     const maxEntries = this.getMaxEntries();
     if (this.manifestCache.size >= maxEntries) {

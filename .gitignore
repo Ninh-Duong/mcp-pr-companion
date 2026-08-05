@@ -1,24 +1,40 @@
-# Sensitive Config & Tokens (CRITICAL - DO NOT COMMIT)
+# Sensitive Credentials, Tokens & Personal Data (CRITICAL - DO NOT COMMIT)
 config.json
 config.local.json
-.mcp-pr-companion/
+config.*.json
+!config.example.json
+config.templates/
+!.gitignore
 *.env
-*.env.local
+*.env.*
 *.pem
 *.key
+session.json
 
-# Temporary Data & Output Dumps
-/output/
+# Local Runtime Storage & User Data Directory
+.mcp-pr-companion/
+
+# Generated AI Context Packs & Data Outputs
+ai-context/
+output/
 temp/
+scratch/
+
+# Logs & Debug Traces
 Logs/
+logs/
 *.log
 
-# Dependencies & Build Outputs
+# Dependencies & Compiled Build Artifacts
 node_modules/
 dist/
 .build/
 .cache/
 
-# System Files
+# OS & Editor Files
 .DS_Store
 Thumbs.db
+.idea/
+.vscode/
+*.suo
+*.user
