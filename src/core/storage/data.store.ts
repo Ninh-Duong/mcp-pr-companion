@@ -264,7 +264,10 @@ export class DataStore {
       fileEntries,
       fileChangesMap,
       commitsJsonl,
-      coverageData
+      coverageData,
+      config.ai_context.app,
+      config.ai_context.company,
+      config.ai_context.root
     );
 
     const cacheKey = `bitbucket:${workspace}:${repoSlug}:${prId}:${rawRev.sourceHash.substring(0, 7)}:${rawRev.destinationHash.substring(0, 7)}:v4`;

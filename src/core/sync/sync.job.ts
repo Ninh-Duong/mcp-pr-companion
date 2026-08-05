@@ -70,8 +70,8 @@ export class SyncJob {
     emit('downloading_diff', 60, 'Downloading diff', undefined, ticketId);
     emit('analyzing', 75, 'Analyzing changed files', undefined, ticketId);
 
-    // Persist data & export to output/
-    emit('persisting', 95, 'Persisting cache & exporting raw data to output/', undefined, ticketId);
+    // Persist internal raw cache and publish the AI context pack.
+    emit('persisting', 95, 'Persisting cache & exporting AI context data', undefined, ticketId);
     DataStore.saveRevision(parsed.workspace, parsed.repoSlug, parsed.prId, rawRev);
 
     // Retention Cleanup

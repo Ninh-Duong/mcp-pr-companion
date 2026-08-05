@@ -4,6 +4,8 @@ import { PRManifestV4 } from './schema/manifest.v4.schema.js';
 import { FileIndexEntryV4 } from './schema/file_index.v4.schema.js';
 import { FileChangeV4 } from './schema/file_change.v4.schema.js';
 import { RevisionWriter } from './revision.writer.js';
+import { StorePathResolver } from './store-path.resolver.js';
+import { ConfigManager } from '../../config/config.manager.js';
 
 export interface ActiveRevisionResult {
   current: {
@@ -19,21 +21,58 @@ export interface ActiveRevisionResult {
 }
 
 export class OutputReader {
-  public static getPROutputDir(workspace: string, repoSlug: string, prId: number): string {
-    const primaryDir = RevisionWriter.getPROutputDir(workspace, repoSlug, prId);
+  private static getConfiguredPathOptions(): { company?: string; root?: string } {
+    try {
+      const config = ConfigManager.loadBase();
+      return {
+        company: config.ai_context.company,
+        root: config.ai_context.root
+      };
+    } catch {
+      return {};
+    }
+  }
+
+  public static getPROutputDir(
+    workspace: string,
+    repoSlug: string,
+    prId: number,
+    company?: string,
+    root?: string
+  ): string {
+    const configured = company !== undefined || root !== undefined
+      ? { company, root }
+      : this.getConfiguredPathOptions();
+
+    const primaryDir = RevisionWriter.getPROutputDir(
+      workspace,
+      repoSlug,
+      prId,
+      configured.company,
+      configured.root
+    );
     if (fs.existsSync(primaryDir)) {
       return primaryDir;
     }
 
-    // Fallback checks for legacy paths
-    const legacyPath1 = path.resolve(process.cwd(), 'output', workspace, repoSlug, `pr_${prId}`);
-    if (fs.existsSync(legacyPath1)) {
-      return legacyPath1;
+    if (configured.company) {
+      const companylessDir = RevisionWriter.getPROutputDir(workspace, repoSlug, prId, undefined, configured.root);
+      if (fs.existsSync(companylessDir)) {
+        return companylessDir;
+      }
     }
 
-    const legacyPath2 = path.resolve(process.cwd(), 'output', 'bitbucket', workspace, repoSlug, `pr_${prId}`);
-    if (fs.existsSync(legacyPath2)) {
-      return legacyPath2;
+    if (configured.root && configured.root !== StorePathResolver.DEFAULT_ROOT) {
+      const defaultRootDir = RevisionWriter.getPROutputDir(
+        workspace,
+        repoSlug,
+        prId,
+        undefined,
+        StorePathResolver.DEFAULT_ROOT
+      );
+      if (fs.existsSync(defaultRootDir)) {
+        return defaultRootDir;
+      }
     }
 
     return primaryDir;

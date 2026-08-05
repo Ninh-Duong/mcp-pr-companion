@@ -10,8 +10,8 @@ export class SyncMenu {
       const choice = await select({
         message: '🔄 Generate & Export PR Data Menu',
         choices: [
-          { name: '1. Export All PRs to /output', value: 'sync_all' },
-          { name: '2. Select PRs to Export to /output', value: 'sync_select' },
+          { name: '1. Export All PRs to AI context store', value: 'sync_all' },
+          { name: '2. Select PRs to Export to AI context store', value: 'sync_select' },
           { name: '3. Show Last Export Summary', value: 'summary' },
           { name: '4. Back to Main Menu', value: 'back' }
         ]

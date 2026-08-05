@@ -1,4 +1,5 @@
 import { Redactor } from '../src/utils/redactor.js';
+import path from 'path';
 import { PRRegistry } from '../src/core/registry/pr.registry.js';
 import { CapabilityGuard } from '../src/config/capability.guard.js';
 import { ConfigManager } from '../src/config/config.manager.js';
@@ -181,6 +182,9 @@ index 1234567..89abcdef 100644
   );
 
   assert(written.manifest.schema_version === '4.0', 'RevisionWriter writes manifest with schema_version 4.0');
+  const writtenPathSegments = path.normalize(written.prDir).split(path.sep);
+  assert(writtenPathSegments.includes('ai-context'), 'RevisionWriter default export root uses ai-context');
+  assert(!writtenPathSegments.includes('output'), 'RevisionWriter default export root does not use output folder');
 
   const active = OutputReader.getActiveRevision(testWs, testRepo, testPr);
   assert(active !== null && active.current.active_revision === written.revisionId, 'OutputReader loads active revision pointer from current.json');

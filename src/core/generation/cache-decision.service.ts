@@ -14,6 +14,6 @@ export class CacheDecisionService {
     destinationHash?: string,
     updatedOn?: string
   ): CacheDecisionResult {
-    return { decision: 'full_generation', reason: 'Cache disabled - direct export to output/' };
+    return { decision: 'full_generation', reason: 'Cache disabled - direct export to AI context store' };
   }
 }
