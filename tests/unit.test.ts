@@ -1,9 +1,7 @@
 import { Redactor } from '../src/utils/redactor.js';
 import path from 'path';
 import { PRRegistry } from '../src/core/registry/pr.registry.js';
-import { CapabilityGuard } from '../src/config/capability.guard.js';
 import { ConfigManager } from '../src/config/config.manager.js';
-import { CacheIndex } from '../src/core/storage/cache.index.js';
 import { DiffParser } from '../src/core/analyzer/diff.parser.js';
 import { ChangeClassifier } from '../src/core/analyzer/change.classifier.js';
 import { RiskAnalyzer } from '../src/core/analyzer/risk.analyzer.js';

@@ -6,6 +6,7 @@
   "ticket_prefix": ["WCE-", "PROJ-", "JIRA-"],
   "default_target_branch": "main",
   "default_pr_url": "",
+  "allowed_emails": [],
   "sync": {
     "concurrency": 2,
     "request_timeout_ms": 30000,
@@ -14,7 +15,6 @@
   "cache": {
     "memory_entries": 20,
     "ttl_seconds": 300,
-    "persist_raw_diff": true,
     "max_revisions_per_pr": 3,
     "retention_days": 30
   },

@@ -2,15 +2,12 @@
   "name": "mcp-pr-companion",
   "version": "1.0.0",
   "description": "Local MCP Server for pre-processing Git PR diffs into compact JSON payloads for AI PR description generation",
-  "main": "dist/index.js",
+  "main": "dist/mcp/server.js",
   "bin": {
     "mcp-pr-companion": "bin/cli.js"
   },
   "type": "module",
   "scripts": {
-    "setup": "node scripts/setup.js",
-    "check-deps": "node scripts/check-packages.js",
-    "install-deps": "node scripts/check-packages.js -y",
     "build": "tsc",
     "start": "node dist/mcp/server.js",
     "dev": "tsx src/mcp/server.ts",
@@ -19,8 +16,7 @@
     "cmd": "tsx src/cmd/cmd.runner.ts",
     "cmd:prod": "node dist/cmd/cmd.runner.js",
     "healthcheck": "tsx src/healthcheck/healthcheck.ts",
-    "generate": "node dist/cli/cli.runner.js",
-    "test": "tsx tests/unit.test.ts && tsx tests/contract.test.ts && tsx tests/integrity.test.ts && tsx tests/aggregate.test.ts && tsx tests/golden.test.ts && tsx tests/atomic_write.test.ts && tsx tests/orchestration.test.ts"
+    "test": "tsx tests/unit.test.ts && tsx tests/contract.test.ts && tsx tests/integrity.test.ts && tsx tests/aggregate.test.ts && tsx tests/golden.test.ts && tsx tests/atomic_write.test.ts && tsx tests/orchestration.test.ts && tsx tests/security.test.ts && tsx tests/ownership-filter.test.ts && tsx tests/session-store.test.ts && tsx tests/benchmark.test.ts"
   },
   "keywords": [
     "mcp",

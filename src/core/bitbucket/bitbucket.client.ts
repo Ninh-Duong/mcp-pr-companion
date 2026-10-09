@@ -1,4 +1,4 @@
-import { BitbucketAuth } from './bitbucket.auth.js';
+import { ApiTokenAuth } from '../auth/api-token.auth.js';
 import { PaginationHelper, PaginatedResult } from './pagination.js';
 import { Redactor } from '../../utils/redactor.js';
 
@@ -11,7 +11,7 @@ export class BitbucketClient {
   constructor(private email?: string, private token?: string) {}
 
   private get headers(): Record<string, string> {
-    return BitbucketAuth.getAuthHeaders(this.email, this.token);
+    return ApiTokenAuth.getAuthHeaders(this.email ?? '', this.token ?? '');
   }
 
   async getPRMetadata(workspace: string, repoSlug: string, prId: number, options: BitbucketFetchOptions = {}): Promise<any> {

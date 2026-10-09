@@ -4,8 +4,8 @@
 export class Redactor {
   // Regex to match Authorization headers (Bearer, Basic, ATBB tokens, etc.)
   private static readonly AUTH_HEADER_REGEX = /(Authorization:\s*)([^\r\n]+)/gi;
-  // Regex to match raw Bearer/Basic tokens
-  private static readonly TOKEN_REGEX = /(ATBB[A-Za-z0-9_-]{10,})/gi;
+  // Regex to match raw Atlassian tokens (ATBB app passwords, ATATT API tokens)
+  private static readonly TOKEN_REGEX = /((?:ATBB|ATATT)[A-Za-z0-9_=-]{10,})/gi;
   // Regex to match email addresses if needed, or password/token fields in JSON
   private static readonly JSON_SECRET_REGEX = /"(app_password|token|password|secret|authorization)"\s*:\s*"([^"]+)"/gi;
 
