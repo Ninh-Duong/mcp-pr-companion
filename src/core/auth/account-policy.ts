@@ -5,7 +5,7 @@ export class AccountPolicy {
     return email ? email.trim().toLowerCase() : '';
   }
 
-  // Empty `allowed_emails` in base config = any account is allowed.
+  // Empty ALLOWED_EMAILS (.env) = any account is allowed.
   static isEmailAllowed(email: string, allowed: string[] = ConfigManager.loadBase().allowed_emails): boolean {
     if (allowed.length === 0) return true;
     const normalized = this.normalizeEmail(email);
@@ -20,7 +20,7 @@ export class AccountPolicy {
     if (!this.isEmailAllowed(normalized)) {
       return {
         allowed: false,
-        reason: 'Access denied. This account is not listed in allowed_emails (.mcp-pr-companion/config/base.json).'
+        reason: 'Access denied. This account is not listed in ALLOWED_EMAILS (.env).'
       };
     }
     return { allowed: true };

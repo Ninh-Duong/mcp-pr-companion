@@ -1,6 +1,5 @@
 import { AccountPolicy } from './account-policy.js';
 import { normalizeUuid } from './current-user.resolver.js';
-import { SessionStore } from './session.store.js';
 
 export interface RepositoryLocator {
   workspace: string;
@@ -71,7 +70,6 @@ class RuntimeSessionManager {
       this.session.displayName = '';
       this.session = null;
     }
-    SessionStore.clearSession();
   }
 
 }

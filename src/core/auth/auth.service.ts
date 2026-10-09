@@ -1,4 +1,3 @@
-import { ConfigManager } from '../../config/config.manager.js';
 import { OpaqueIDGenerator } from '../storage/opaque.id.js';
 import { CapabilityProbe, ProbeStageResult } from './capability.probe.js';
 import { FileLogger } from '../logging/file.logger.js';
@@ -39,21 +38,6 @@ export class AuthService {
         return { valid: false, error: 'Both workspace and repository slug must be non-empty.' };
       }
       return { valid: true, workspace, repoSlug };
-    } else if (parts.length === 1) {
-      const repoSlug = parts[0].trim().toLowerCase();
-      // Try to load default workspace from base config
-      try {
-        const baseConfig = ConfigManager.loadBase();
-        if (baseConfig && baseConfig.workspace) {
-          return { valid: true, workspace: baseConfig.workspace.toLowerCase(), repoSlug };
-        }
-      } catch {
-        // Ignore
-      }
-      return {
-        valid: false,
-        error: `Repository must be in format "workspace/repository". Default workspace is not configured in base config.`
-      };
     } else {
       return { valid: false, error: 'Invalid repository format. Expected "workspace/repository".' };
     }
