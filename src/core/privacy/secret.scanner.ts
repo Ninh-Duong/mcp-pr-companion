@@ -18,6 +18,11 @@ export class SecretScanner {
       replacement: '[REDACTED:BASIC_AUTH]'
     },
     {
+      category: 'atlassian_token',
+      regex: /\b(?:ATBB|ATATT)[A-Za-z0-9_=-]{10,}/g,
+      replacement: '[REDACTED:ATLASSIAN_TOKEN]'
+    },
+    {
       category: 'aws_key',
       regex: /\b(AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}\b/g,
       replacement: '[REDACTED:AWS_KEY]'
