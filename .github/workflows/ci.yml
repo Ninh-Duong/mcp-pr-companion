@@ -9,6 +9,15 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      - run: node bin/cli.js prepare
       - run: npx tsc --noEmit
       - run: npm test
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t mcp-pr-companion .
+      # Dependencies + build must be ready inside the image; only config is expected to be missing.
+      - run: |
+          docker run --rm -e BITBUCKET_EMAIL=ci@example.com -e BITBUCKET_API_TOKEN=x -e BITBUCKET_REPOSITORY=ci/repo \
+            mcp-pr-companion check

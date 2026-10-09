@@ -15,7 +15,7 @@
   - Manages active revision pointers via `current.json` (`context_path`, `files_summary_path`, `actions_path`, `manifest_path`, `ai_reading_mode`).
 * **MCP Server & Dual-Interface Architecture**:
   - **Local MCP Server over stdio**: Exposes MCP tools (`get_pr_context_pack`, `get_pr_file_context`, `search_pr_files`, `get_pr_manifest`, `get_pr_sync_status`, `refresh_pr_data`) for direct integration with AI IDEs and Agents.
-  - **Terminal UI (`npm run cmd`)**: Log in with an Atlassian API token, view your open pull requests, and generate context packs.
+  - **Terminal UI (`npm run cmd`)**: Authenticates with the API token from `.env`, then lets you view your open pull requests and generate context packs.
   - **One-Command Auto Sync (`npm run mcp-pr-companion`)**: Automated sequential discovery, filtering, and context pack generation for all OPEN pull requests owned by the user.
 * **AST Analyzer & Secret Redacting Security**:
   - Classifies change kinds (`comment_only`, `functional_logic`, `public_api`, `database_schema`, `auth_security`, `configuration`, etc.).
@@ -25,31 +25,69 @@
 
 ---
 
-## 🛠️ 2. Available Commands
+## 🛠️ 2. Setup & Run
 
-Setup (Node.js ≥ 18 and Git required):
+### Quick start (any machine)
 
 ```bash
-npm ci
-npm run build
+git clone <repo-url> && cd mcp-pr-companion
+./run.sh cmd          # Linux / macOS
+run.cmd cmd           # Windows
 ```
 
-Configuration lives in `.mcp-pr-companion/config/base.json` (see `config.templates/base.example.json`); every field is optional. Use `"allowed_emails": ["you@company.com"]` to restrict which Atlassian accounts may log in (empty = any account).
+The first run prepares everything automatically and stops once to ask for configuration:
 
-The MCP server fetches from Bitbucket using the session saved by `npm run cmd` (valid 30 minutes), or the `BITBUCKET_EMAIL` / `BITBUCKET_READ_TOKEN` environment variables.
+1. **Node.js**: `run.cmd` / `run.sh` install Node.js LTS if it is missing or older than 20.12 (Windows: `winget`; macOS: `brew`; Linux: NodeSource via `apt-get`/`dnf`/`yum`, needs `sudo`).
+2. **Dependencies**: `bin/cli.js` runs `npm ci` whenever `package-lock.json` changes (needs access to the npm registry).
+3. **Build**: rebuilds `dist/` whenever `src/` changes.
+4. **Configuration**: creates `.env` from `.env.example` and lists the values to fill in. Fill them in and run the same command again.
 
+If Node.js ≥ 20.12 is already installed you can skip the launcher and use `node bin/cli.js <command>` or the npm scripts below.
+
+### Configuration (`.env`)
+
+All settings, including credentials, come from environment variables. `.env` is git-ignored and docker-ignored; only the empty template `.env.example` is committed. Variables already set in the real environment (CI, Docker `--env-file`) take precedence over `.env`, and `.env` is then optional. Nothing is ever prompted for or written to disk.
+
+| Variable | Required | Description |
+|---|---|---|
+| `BITBUCKET_EMAIL` | ✅ | Atlassian account email |
+| `BITBUCKET_API_TOKEN` | ✅ | Bitbucket API token, read-only scopes: `read:user`, `read:pullrequest`, `read:repository` |
+| `BITBUCKET_REPOSITORY` | ✅ for `cmd` / `generate-all` | `workspace/repo` (the MCP server takes the repository from each PR URL) |
+| `ALLOWED_EMAILS` | | Comma-separated accounts allowed to run the tool (empty = any) |
+| `TICKET_PREFIXES` | | Default `WCE-,PROJ-,JIRA-` |
+| `PRIVACY_MODE`, `PRIVACY_REMOVE_AUTHOR`, `PRIVACY_FILE_PATH_MODE`, `PRIVACY_MAX_COMMIT_SUBJECTS` | | Output privacy settings (defaults in `.env.example`) |
+| `AI_CONTEXT_ROOT`, `AI_CONTEXT_COMPANY`, `AI_CONTEXT_APP` | | Output location (default `ai-context/siliconstack/...`) |
+
+### Commands
 
 | Command | Description |
 |---|---|
-| `npm run cmd` | Launches the interactive **Terminal UI (TUI)**: log in, view open PRs, generate context packs, log out. |
-| `npm run cmd:prod` | Launches the Terminal UI using compiled JavaScript assets in `dist/`. |
-| `npm run mcp-pr-companion` | Runs the **One-Command Auto Runner**: Authenticates session, discovers all OPEN pull requests for the active user, and syncs/generates context packs automatically. |
-| `npm run mcp-pr-companion:prod` | Runs the One-Command Auto Runner using compiled JavaScript assets in `dist/`. |
-| `npm start` | Starts the **Local MCP Server** in production mode over stdio transport for AI Agent connections. |
-| `npm run dev` | Starts the MCP Server from TypeScript sources via `tsx` (no build step). |
-| `npm run build` | Compiles TypeScript source files (`src/`) into JavaScript (`dist/`). |
-| `npm test` | Runs every test file in `tests/` (unit, schema contract, integrity, aggregate, golden scenarios, atomic write, orchestration, security, ownership filter, session store, benchmark). |
-| `npm run healthcheck` | Performs pre-flight environment checks (Node.js version, Git CLI availability). |
+| `npm run cmd` (`node bin/cli.js cmd`) | **Terminal UI**: view open PRs, sync a PR, generate context packs. |
+| `npm run mcp-pr-companion` (`node bin/cli.js generate-all`) | **One-command run**: discovers your open PRs and generates context packs, no interaction. |
+| `npm start` (`node bin/cli.js server`) | **MCP server** over stdio for AI IDEs / agents. |
+| `npm run healthcheck` (`node bin/cli.js check`) | Reports Node.js, dependencies, build and `.env` status without changing anything (exit 1 if not ready). |
+| `npm run prepare-app` (`node bin/cli.js prepare`) | Installs dependencies and builds without starting anything (used by Docker/CI). |
+| `npm run dev` | MCP server from TypeScript sources via `tsx` (developers; reads `.env`). |
+| `npm run build` / `npm test` | Compile `src/` to `dist/` / run all test files in isolated temp directories. |
+
+### MCP client configuration
+
+Point your MCP client at the bootstrap so it always starts from a ready state:
+
+```json
+{ "mcpServers": { "mcp-pr-companion": { "command": "node", "args": ["/absolute/path/to/mcp-pr-companion/bin/cli.js"] } } }
+```
+
+### Docker
+
+```bash
+docker build -t mcp-pr-companion .
+docker run --rm -i  --env-file .env -v "$PWD/ai-context:/app/ai-context" mcp-pr-companion                # MCP server (stdio)
+docker run --rm -it --env-file .env -v "$PWD/ai-context:/app/ai-context" mcp-pr-companion cmd            # Terminal UI
+docker run --rm     --env-file .env -v "$PWD/ai-context:/app/ai-context" mcp-pr-companion generate-all   # One-command run
+```
+
+Credentials are passed at run time with `--env-file` and are never baked into the image.
 
 ---
 
