@@ -25,7 +25,6 @@ export interface ClassificationResult {
 
 export class ChangeClassifier {
   static classify(fileDiff: ParsedFileDiff): ClassificationResult {
-    const evidence: string[] = [];
     const filepath = fileDiff.newPath || fileDiff.oldPath || '';
     const ext = path.extname(filepath).toLowerCase();
     const basename = path.basename(filepath);

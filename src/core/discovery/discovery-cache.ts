@@ -25,12 +25,6 @@ export class DiscoveryCache {
     return prMap ? Array.from(prMap.values()) : [];
   }
 
-  static getPR(userUuid: string, workspace: string, repoSlug: string, prId: number): DiscoveredPR | undefined {
-    const key = this.getScopeKey(userUuid, workspace, repoSlug);
-    const prMap = this.scopedMap.get(key);
-    return prMap ? prMap.get(prId) : undefined;
-  }
-
   static evaluateCacheStatus(
     workspace: string,
     repoSlug: string,

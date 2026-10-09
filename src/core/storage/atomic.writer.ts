@@ -1,6 +1,5 @@
 import fs from 'fs';
 import path from 'path';
-import zlib from 'zlib';
 
 export class AtomicWriter {
   /**
@@ -27,29 +26,5 @@ export class AtomicWriter {
     }
 
     fs.renameSync(tempPath, targetPath);
-  }
-
-  /**
-   * Writes JSON object atomically.
-   */
-  static writeJson(targetPath: string, data: any): void {
-    this.writeFileSync(targetPath, JSON.stringify(data, null, 2));
-  }
-
-  /**
-   * Writes gzipped data atomically.
-   */
-  static writeGzipSync(targetPath: string, content: string | Buffer): void {
-    const compressed = zlib.gzipSync(content);
-    this.writeFileSync(targetPath, compressed);
-  }
-
-  /**
-   * Reads gzipped file content as string.
-   */
-  static readGzipSync(targetPath: string): string {
-    const compressed = fs.readFileSync(targetPath);
-    const decompressed = zlib.gunzipSync(compressed);
-    return decompressed.toString('utf-8');
   }
 }

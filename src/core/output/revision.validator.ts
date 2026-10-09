@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { PRManifestV4Schema, PRManifestV4 } from './schema/manifest.v4.schema.js';
 import { FileIndexEntryV4Schema, FileIndexEntryV4 } from './schema/file_index.v4.schema.js';
-import { FileChangeV4Schema, FileChangeV4 } from './schema/file_change.v4.schema.js';
+import { FileChangeV4Schema } from './schema/file_change.v4.schema.js';
 import { PRCoverageV4Schema } from './schema/coverage.v4.schema.js';
 
 export interface ValidationResult {

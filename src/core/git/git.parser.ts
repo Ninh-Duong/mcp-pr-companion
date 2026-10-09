@@ -23,21 +23,4 @@ export class GitParser {
     return 'N/A';
   }
 
-  static generatePRTitle(sourceBranch: string, ticketId: string, commits: string[]): string {
-    // If we have commits, use the most descriptive clean commit title
-    if (commits.length > 0) {
-      const firstCommit = commits[0];
-      // Clean leading ticket ids if redundant
-      const cleaned = firstCommit.replace(/^\[.*?\]\s*/, '').replace(/^wce-\d+:\s*/i, '');
-      if (ticketId !== 'N/A') {
-        return `[${ticketId}] ${cleaned}`;
-      }
-      return cleaned;
-    }
-
-    // Fallback: derive title from branch name
-    const branchBasename = sourceBranch.split('/').pop() || sourceBranch;
-    const readableTitle = branchBasename.replace(/[-_]/g, ' ');
-    return ticketId !== 'N/A' ? `[${ticketId}] ${readableTitle}` : readableTitle;
-  }
 }

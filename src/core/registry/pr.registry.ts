@@ -1,12 +1,3 @@
-import fs from 'fs';
-import path from 'path';
-import { Logger } from '../../utils/logger.js';
-
-export interface PRRegistryData {
-  schema_version: number;
-  items: string[];
-}
-
 export interface ParsedPRUrl {
   workspace: string;
   repoSlug: string;
@@ -15,15 +6,6 @@ export interface ParsedPRUrl {
 }
 
 export class PRRegistry {
-  private static prsDir = path.resolve(process.cwd(), '.mcp-pr-companion', 'prs');
-  private static linksFile = path.join(PRRegistry.prsDir, 'links.json');
-
-  static ensureDirs(): void {
-    if (!fs.existsSync(this.prsDir)) {
-      fs.mkdirSync(this.prsDir, { recursive: true });
-    }
-  }
-
   static parseAndValidateUrl(urlInput: string): ParsedPRUrl {
     if (!urlInput || typeof urlInput !== 'string') {
       throw new Error('PR URL must be a non-empty string.');
@@ -78,132 +60,5 @@ export class PRRegistry {
       prId,
       canonicalUrl
     };
-  }
-
-  static buildPRUrl(workspace: string, repoSlug: string, prId: number | string): string {
-    const cleanWs = workspace.trim().replace(/^\/+|\/+$/g, '').toLowerCase();
-    const cleanRepo = repoSlug.trim().replace(/^\/+|\/+$/g, '').toLowerCase();
-    const cleanId = String(prId).trim().replace(/^#/, '');
-
-    return `https://bitbucket.org/${cleanWs}/${cleanRepo}/pull-requests/${cleanId}`;
-  }
-
-  static list(): string[] {
-    this.ensureDirs();
-    if (!fs.existsSync(this.linksFile)) {
-      return [];
-    }
-
-    try {
-      const raw = fs.readFileSync(this.linksFile, 'utf-8');
-      const data: PRRegistryData = JSON.parse(raw);
-      return Array.isArray(data.items) ? data.items : [];
-    } catch (err) {
-      Logger.warn(`Failed to read ${this.linksFile}, returning empty list.`, err);
-      return [];
-    }
-  }
-
-  static add(urlInput: string): { success: boolean; canonicalUrl: string; message: string } {
-    const parsed = this.parseAndValidateUrl(urlInput);
-    const items = this.list();
-
-    if (items.includes(parsed.canonicalUrl)) {
-      return {
-        success: false,
-        canonicalUrl: parsed.canonicalUrl,
-        message: `PR link already exists in registry: ${parsed.canonicalUrl}`
-      };
-    }
-
-    items.push(parsed.canonicalUrl);
-    this.saveAtomic(items);
-
-    return {
-      success: true,
-      canonicalUrl: parsed.canonicalUrl,
-      message: `Successfully added PR link: ${parsed.canonicalUrl}`
-    };
-  }
-
-  static remove(urlInput: string): { success: boolean; message: string } {
-    let canonicalUrl: string;
-    try {
-      const parsed = this.parseAndValidateUrl(urlInput);
-      canonicalUrl = parsed.canonicalUrl;
-    } catch {
-      canonicalUrl = urlInput.trim().toLowerCase();
-    }
-
-    const items = this.list();
-    const index = items.indexOf(canonicalUrl);
-
-    if (index === -1) {
-      return { success: false, message: `PR link not found in registry: ${urlInput}` };
-    }
-
-    items.splice(index, 1);
-    this.saveAtomic(items);
-
-    return { success: true, message: `Removed PR link: ${canonicalUrl}` };
-  }
-
-  static clear(): void {
-    this.saveAtomic([]);
-  }
-
-  static deduplicate(): { countBefore: number; countAfter: number; removed: number } {
-    const items = this.list();
-    const unique: string[] = [];
-    for (const item of items) {
-      try {
-        const parsed = this.parseAndValidateUrl(item);
-        if (!unique.includes(parsed.canonicalUrl)) {
-          unique.push(parsed.canonicalUrl);
-        }
-      } catch {
-        // Skip invalid items during deduplication
-      }
-    }
-
-    const removed = items.length - unique.length;
-    if (removed > 0) {
-      this.saveAtomic(unique);
-    }
-
-    return {
-      countBefore: items.length,
-      countAfter: unique.length,
-      removed
-    };
-  }
-
-  static validateAll(): { valid: string[]; invalid: { url: string; error: string }[] } {
-    const items = this.list();
-    const valid: string[] = [];
-    const invalid: { url: string; error: string }[] = [];
-
-    for (const item of items) {
-      try {
-        const parsed = this.parseAndValidateUrl(item);
-        valid.push(parsed.canonicalUrl);
-      } catch (err: any) {
-        invalid.push({ url: item, error: err.message || String(err) });
-      }
-    }
-
-    return { valid, invalid };
-  }
-
-  private static saveAtomic(items: string[]): void {
-    this.ensureDirs();
-    const data: PRRegistryData = {
-      schema_version: 1,
-      items
-    };
-
-    const tempFile = `${this.linksFile}.tmp-${Math.random().toString(36).substring(2, 8)}`;
-    fs.writeFileSync(tempFile, JSON.stringify(data, null, 2), 'utf-8');
-    fs.renameSync(tempFile, this.linksFile);
   }
 }

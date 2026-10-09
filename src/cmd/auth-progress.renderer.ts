@@ -17,13 +17,4 @@ export class AuthProgressRenderer {
     console.log(`[${stage.stageIndex}/7] ${symbol} ${stage.message}`);
   }
 
-  static renderFailureSummary(failedStage: ProbeStageResult, logFilePath: string): void {
-    console.log('\nValidation failed');
-    console.log(`✗ ${failedStage.stageName}`);
-    console.log(`Reason: ${failedStage.message}`);
-    if (failedStage.errorCode) {
-      console.log(`Error Code: ${failedStage.errorCode}`);
-    }
-    console.log(`Log: ${logFilePath}\n`);
-  }
 }

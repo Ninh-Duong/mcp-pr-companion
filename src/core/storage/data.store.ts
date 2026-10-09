@@ -9,7 +9,7 @@ import { PathSanitizer } from '../privacy/path.sanitizer.js';
 import { SensitiveFilePolicy } from '../analyzer/sensitive.file.policy.js';
 import { BitbucketAllowlistProjector } from '../bitbucket/bitbucket.allowlist.js';
 import { DiffParser } from '../analyzer/diff.parser.js';
-import { ChangeClassifier, ChangeKind } from '../analyzer/change.classifier.js';
+import { ChangeClassifier } from '../analyzer/change.classifier.js';
 import { RiskAnalyzer, RiskLevel } from '../analyzer/risk.analyzer.js';
 import { SymbolExtractor } from '../analyzer/symbol.extractor.js';
 import { RevisionWriter } from '../output/revision.writer.js';

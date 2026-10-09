@@ -24,7 +24,6 @@ export class FileLogger {
     this.workspace = workspace;
     this.repoSlug = repoSlug;
     const dateStr = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-    const timeStr = new Date().toISOString().replace(/[:.]/g, '-').substring(11, 19);
     const compactTime = new Date().toISOString().replace(/[-:T.]/g, '').substring(0, 14);
 
     this.runId = `run_${Math.random().toString(36).substring(2, 8)}`;
