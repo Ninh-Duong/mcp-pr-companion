@@ -11,8 +11,7 @@ export async function runCMD(): Promise<void> {
   // Step 1: Execute login & realtime capability probes
   const session = await LoginScreen.executeLoginFlow();
   if (!session) {
-    console.log('\nExit requested. Bye!');
-    process.exit(0);
+    process.exit(1);
   }
 
   // Step 2: Initial PR discovery for authenticated user

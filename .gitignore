@@ -1,36 +1,36 @@
-# Sensitive Credentials, Tokens & Personal Data (CRITICAL - DO NOT COMMIT)
-config.json
-config.local.json
-config.*.json
-!config.example.json
-config.templates/
-!.gitignore
+# Credentials & personal data (NEVER COMMIT)
+# All settings live in .env; only the empty template .env.example is tracked.
+.env
+.env.*
 *.env
-*.env.*
+!.env.example
 *.pem
 *.key
+# Legacy local config files from older versions (may contain app passwords)
+config.json
+config.*.json
 session.json
 
-# Local Runtime Storage & User Data Directory
+# Local runtime storage (opaque-id salt, caches)
 .mcp-pr-companion/
 
-# Generated AI Context Packs & Data Outputs
+# Generated AI context packs & data outputs
 ai-context/
 temp/
 scratch/
 
-# Logs & Debug Traces
+# Logs & debug traces
 Logs/
 logs/
 *.log
 
-# Dependencies & Compiled Build Artifacts
+# Dependencies & build artifacts (recreated by bin/cli.js)
 node_modules/
 dist/
 .build/
 .cache/
 
-# OS & Editor Files
+# OS & editor files
 .DS_Store
 Thumbs.db
 .idea/

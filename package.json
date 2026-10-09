@@ -7,15 +7,17 @@
     "mcp-pr-companion": "bin/cli.js"
   },
   "type": "module",
+  "engines": {
+    "node": ">=20.12"
+  },
   "scripts": {
+    "start": "node bin/cli.js server",
+    "cmd": "node bin/cli.js cmd",
+    "mcp-pr-companion": "node bin/cli.js generate-all",
+    "healthcheck": "node bin/cli.js check",
+    "prepare-app": "node bin/cli.js prepare",
     "build": "tsc",
-    "start": "node dist/mcp/server.js",
-    "dev": "tsx src/mcp/server.ts",
-    "mcp-pr-companion": "tsx src/cmd/generate-all.runner.ts",
-    "mcp-pr-companion:prod": "node dist/cmd/generate-all.runner.js",
-    "cmd": "tsx src/cmd/cmd.runner.ts",
-    "cmd:prod": "node dist/cmd/cmd.runner.js",
-    "healthcheck": "tsx src/healthcheck/healthcheck.ts",
+    "dev": "tsx --env-file=.env src/mcp/server.ts",
     "test": "node tests/run.mjs"
   },
   "keywords": [

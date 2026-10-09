@@ -2,8 +2,6 @@ import { select } from '@inquirer/prompts';
 import { runtimeSession } from '../core/auth/runtime-session.js';
 import { PRListScreen } from './pr-list.screen.js';
 import { GenerateMenu } from './generate.menu.js';
-import { LogoutService } from './logout.service.js';
-import { DiscoveryCache } from '../core/discovery/discovery-cache.js';
 
 export class MainMenu {
   static displayHeader(): void {
@@ -32,8 +30,7 @@ export class MainMenu {
         choices: [
           { name: '1. View current pull requests', value: 'view_prs' },
           { name: '2. Generate PR data', value: 'generate_data' },
-          { name: '3. Logout', value: 'logout' },
-          { name: '4. Exit CLI', value: 'exit' }
+          { name: '3. Exit CLI', value: 'exit' }
         ]
       });
 
@@ -41,10 +38,6 @@ export class MainMenu {
         await PRListScreen.render();
       } else if (choice === 'generate_data') {
         await GenerateMenu.displayMenu();
-      } else if (choice === 'logout') {
-        DiscoveryCache.clearAll();
-        await LogoutService.executeLogout();
-        return;
       } else if (choice === 'exit') {
         console.log('\nExiting MCP PR Companion. Goodbye!');
         process.exit(0);

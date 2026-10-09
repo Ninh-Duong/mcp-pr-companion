@@ -1,10 +1,7 @@
 import { pathToFileURL } from 'url';
-import { confirm } from '@inquirer/prompts';
 import { SecureShutdown } from '../core/auth/secure-shutdown.js';
-import { SessionStore } from '../core/auth/session.store.js';
 import { runtimeSession, RuntimeSession } from '../core/auth/runtime-session.js';
 import { LoginScreen } from './login.screen.js';
-import { TokenVerifyScreen } from './token-verify.screen.js';
 import { GenerateAllService, GenerateAllResult } from '../core/orchestration/generate-all.service.js';
 import { GenerationProgressRenderer } from './generation-progress.renderer.js';
 import { LogRedactor } from '../core/logging/log.redactor.js';
@@ -15,49 +12,10 @@ export async function runGenerateAll(): Promise<number> {
   let session: RuntimeSession | null = null;
 
   try {
-    const existing = SessionStore.loadValidSession();
-    if (existing) {
-      console.clear();
-      console.log('========================================================');
-      console.log('            MCP PR COMPANION — ONE COMMAND              ');
-      console.log('========================================================');
-      console.log(`📌 Active Session Detected:`);
-      console.log(`   Account   : ${existing.session.email}`);
-      console.log(`   Repo      : ${existing.session.repository.workspace}/${existing.session.repository.repoSlug}`);
-      console.log(`   TTL       : Valid for ${existing.remainingMinutes} minute(s)`);
-      console.log('--------------------------------------------------------\n');
-
-      const useExisting = await confirm({
-        message: `Use active session ${existing.session.email} for ${existing.session.repository.workspace}/${existing.session.repository.repoSlug}?`,
-        default: true
-      });
-
-      if (useExisting) {
-        runtimeSession.setSession(existing.session);
-        session = existing.session;
-      } else {
-        SessionStore.clearSession();
-        session = await LoginScreen.executeLoginFlow();
-      }
-    } else {
-      session = await LoginScreen.executeLoginFlow();
-    }
-
-    if (!session) {
-      console.log('\nOperation cancelled by user.');
-      return 130;
-    }
-
-    const tokenValid = await TokenVerifyScreen.verifyOrUpdateToken();
-    if (tokenValid !== 'valid') {
-      console.log('\nToken verification failed or cancelled by user.');
-      return tokenValid === 'cancelled' ? 130 : 1;
-    }
-
-    // Refresh active session reference in case token was updated
-    const activeSession = runtimeSession.getSession();
+    // Credentials come from .env; login already runs the full capability probe.
+    session = await LoginScreen.executeLoginFlow();
+    const activeSession = session && runtimeSession.getSession();
     if (!activeSession) {
-      console.log('\nNo active authenticated session.');
       return 1;
     }
 

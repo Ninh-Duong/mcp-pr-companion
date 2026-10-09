@@ -1,0 +1,3 @@
+# Keep launcher line endings correct regardless of the developer's git autocrlf setting.
+*.sh text eol=lf
+*.cmd text eol=crlf

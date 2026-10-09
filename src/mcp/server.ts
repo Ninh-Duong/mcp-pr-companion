@@ -2,7 +2,6 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { PRContextService } from './context.service.js';
-import { runHealthCheck } from '../healthcheck/healthcheck.js';
 import { Logger } from '../utils/logger.js';
 import { z } from 'zod';
 
@@ -24,12 +23,6 @@ const ToolArgsSchema = z.object({
 
 async function startServer() {
   Logger.info('Starting mcp-pr-companion Local MCP Server v4.0...');
-
-  // Perform quick pre-flight healthcheck
-  const health = runHealthCheck();
-  if (!health.checks.node || !health.checks.git) {
-    Logger.error('Healthcheck failed on startup. Please run "npm run setup" first.', health.messages);
-  }
 
   const server = new Server(
     {

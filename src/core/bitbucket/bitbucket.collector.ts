@@ -1,24 +1,21 @@
 import { BitbucketClient, BitbucketFetchOptions } from './bitbucket.client.js';
 import { RawPRRevision } from './bitbucket.types.js';
-import { SessionStore } from '../auth/session.store.js';
+import { ConfigManager } from '../../config/config.manager.js';
 import { Logger } from '../../utils/logger.js';
 import { Redactor } from '../../utils/redactor.js';
 
 export class BitbucketCollector {
   private client: BitbucketClient;
 
-  /**
-   * Without explicit credentials (MCP server path), use the session saved by
-   * `npm run cmd` login, then BITBUCKET_EMAIL / BITBUCKET_READ_TOKEN env vars.
-   */
+  /** Without explicit credentials (MCP server path), use BITBUCKET_EMAIL / BITBUCKET_API_TOKEN from .env. */
   constructor(email?: string, token?: string) {
     if (!email || !token) {
-      const session = SessionStore.loadValidSession()?.session;
-      email = email || session?.email || process.env.BITBUCKET_EMAIL;
-      token = token || session?.token || process.env.BITBUCKET_READ_TOKEN;
+      const creds = ConfigManager.credentials();
+      email = email || creds.email;
+      token = token || creds.token;
     }
     if (!token) {
-      throw new Error('No Bitbucket credentials: run `npm run cmd` to log in, or set BITBUCKET_EMAIL and BITBUCKET_READ_TOKEN.');
+      throw new Error('No Bitbucket credentials: set BITBUCKET_EMAIL and BITBUCKET_API_TOKEN in .env.');
     }
     this.client = new BitbucketClient(email, token);
   }
