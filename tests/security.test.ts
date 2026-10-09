@@ -6,6 +6,8 @@ import { SensitiveFilePolicy } from '../src/core/analyzer/sensitive.file.policy.
 import { OpaqueIDGenerator } from '../src/core/storage/opaque.id.js';
 import { DataStore } from '../src/core/storage/data.store.js';
 import { RedactionTracker } from '../src/core/privacy/redaction.report.js';
+import { Redactor } from '../src/utils/redactor.js';
+import { LogRedactor } from '../src/core/logging/log.redactor.js';
 
 let passed = 0;
 let failed = 0;
@@ -87,6 +89,12 @@ async function runSecurityTests() {
 
   const revId1 = OpaqueIDGenerator.getRevisionID('abc123hash', 'def456hash');
   assert(revId1.startsWith('rev_'), 'OpaqueIDGenerator produces rev_xxx revision ID');
+
+  console.log('\n6. Atlassian API Token (ATATT) Redaction:');
+  const atatt = 'ATATT3xFfGF0abcdefghijklmnop1234567890=ABCD1234';
+  assert(!SecretScanner.scanAndRedact(`token used: ${atatt}`).includes('ATATT3x'), 'SecretScanner redacts ATATT API tokens');
+  assert(!Redactor.redact(`err ${atatt}`).includes('abcdefghijklmnop'), 'Redactor masks ATATT API tokens');
+  assert(!LogRedactor.redactString(`err ${atatt}`).includes('ATATT3x'), 'LogRedactor redacts ATATT API tokens');
 
   console.log('\n================================================================');
   console.log(`Security Test Results: ${passed} Passed | ${failed} Failed`);
