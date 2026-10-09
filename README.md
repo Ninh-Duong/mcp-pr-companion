@@ -7,7 +7,7 @@ Bạn có thể dùng theo 3 cách:
 | Cách dùng | Lệnh | Khi nào dùng |
 |---|---|---|
 | **Menu trong terminal** | `.\run.cmd cmd` | Xem danh sách PR của bạn, chọn PR để tạo context |
-| **Chạy 1 lệnh tự động** | `.\run.cmd generate-all` | Tạo context cho **tất cả** PR đang mở của bạn, không cần thao tác |
+| **Chạy 1 lệnh tự động** | `.\run.cmd generate-all` | Tạo context cho **tất cả** PR đang mở của bạn trong mọi repo khai báo, không cần thao tác |
 | **MCP server** | `.\run.cmd` | Để AI trong IDE tự gọi lấy context PR |
 
 ---
@@ -38,13 +38,16 @@ Lần chạy đầu, công cụ **tự chuẩn bị mọi thứ**, bạn không 
 
 ### Bước 3: Điền file `.env`
 
-Mở file `.env` ở thư mục gốc và điền 3 dòng:
+Mở file `.env` ở thư mục gốc và điền:
 
 ```ini
 BITBUCKET_EMAIL=ten.ban@siliconstack.com.au
 BITBUCKET_API_TOKEN=ATATT...
-BITBUCKET_REPOSITORY=siliconstack/wec.be
+BITBUCKET_WORKSPACE=siliconstack
+BITBUCKET_REPOSITORY=wec.be,wec.database
 ```
+
+`BITBUCKET_REPOSITORY` nhận **nhiều repo**, cách nhau bằng dấu phẩy. Repo nào không ghi workspace sẽ dùng `BITBUCKET_WORKSPACE`. Có thể ghi đầy đủ `workspace/repo` nếu repo nằm ở workspace khác, ví dụ `wec.be,other-team/tool`.
 
 Chạy lại `.\run.cmd check`. Thấy toàn dấu ✓ là xong:
 
@@ -65,7 +68,7 @@ Chạy lại `.\run.cmd check`. Thấy toàn dấu ✓ là xong:
 
 ```powershell
 .\run.cmd cmd            # mở menu: xem PR, Sync 1 PR, Generate nhiều PR
-.\run.cmd generate-all   # tạo context cho tất cả PR đang mở của bạn
+.\run.cmd generate-all   # tạo context cho tất cả PR đang mở của bạn, trong mọi repo khai báo
 .\run.cmd check          # kiểm tra môi trường (không thay đổi gì)
 ```
 
@@ -134,7 +137,8 @@ Mọi cấu hình nằm trong file `.env`. Danh sách đầy đủ có trong `.e
 |---|---|---|
 | `BITBUCKET_EMAIL` | ✅ | Email tài khoản Atlassian |
 | `BITBUCKET_API_TOKEN` | ✅ | API token (chỉ quyền đọc) |
-| `BITBUCKET_REPOSITORY` | ✅ (với `cmd`, `generate-all`) | Repo dạng `workspace/repo`. MCP server không cần vì lấy repo từ link PR |
+| `BITBUCKET_REPOSITORY` | ✅ (với `cmd`, `generate-all`) | Danh sách repo, cách nhau bằng dấu phẩy: `wec.be,wec.database` hoặc `workspace/repo`. `generate-all` chạy **tất cả** repo; `cmd` cho chọn repo (và đổi repo trong menu). MCP server không cần vì lấy repo từ link PR |
+| `BITBUCKET_WORKSPACE` | | Workspace mặc định cho các repo không ghi workspace, vd `siliconstack` |
 | `ALLOWED_EMAILS` | | Chỉ cho phép các email này chạy tool (phân cách bằng dấu phẩy). Để trống = ai cũng chạy được |
 | `TICKET_PREFIXES` | | Tiền tố mã ticket, mặc định `WCE-,PROJ-,JIRA-` |
 | `PRIVACY_*` | | Mức ẩn thông tin trong kết quả (mặc định đã an toàn) |

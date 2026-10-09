@@ -26,7 +26,14 @@ async function runOrchestrationTests() {
     AI_CONTEXT_ROOT: 'out'
   });
   const creds = ConfigManager.credentials();
-  assert.deepStrictEqual(creds, { email: 'a.user@example.com', token: 'test-token-secret-123', repository: 'test-workspace/test-repo' });
+  assert.deepStrictEqual(creds, { email: 'a.user@example.com', token: 'test-token-secret-123', repositories: ['test-workspace/test-repo'] });
+
+  // Repository list: bare slugs get BITBUCKET_WORKSPACE, full "ws/repo" kept, duplicates dropped
+  Object.assign(process.env, {
+    BITBUCKET_WORKSPACE: 'siliconstack',
+    BITBUCKET_REPOSITORY: 'wec.be, wec.database ,other-ws/tool,wec.be,'
+  });
+  assert.deepStrictEqual(ConfigManager.credentials().repositories, ['siliconstack/wec.be', 'siliconstack/wec.database', 'other-ws/tool']);
   const config = ConfigManager.loadBase();
   assert.deepStrictEqual(config.allowed_emails, ['a.user@example.com', 'b.user@example.com']);
   assert.deepStrictEqual(config.ticket_prefix, ['ABC-', 'XYZ-']);

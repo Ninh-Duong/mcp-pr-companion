@@ -1,3 +1,4 @@
+import { select } from '@inquirer/prompts';
 import { AuthService } from '../core/auth/auth.service.js';
 import { AuthProgressRenderer } from './auth-progress.renderer.js';
 import { RuntimeSession } from '../core/auth/runtime-session.js';
@@ -22,20 +23,31 @@ export class LoginScreen {
 
   /**
    * Authenticates with the credentials from .env (BITBUCKET_EMAIL, BITBUCKET_API_TOKEN,
-   * BITBUCKET_REPOSITORY). Never prompts; on failure prints what to fix in .env.
+   * BITBUCKET_REPOSITORY). Never asks for credentials; when several repositories are
+   * configured and none is given, lets the user pick one of them. On failure prints
+   * what to fix in .env.
    */
-  static async executeLoginFlow(): Promise<RuntimeSession | null> {
+  static async executeLoginFlow(repository?: string): Promise<RuntimeSession | null> {
     this.displayHeader();
-    const { email, token, repository } = ConfigManager.credentials();
+    const { email, token, repositories } = ConfigManager.credentials();
 
     const missing = [
       !email && 'BITBUCKET_EMAIL',
       !token && 'BITBUCKET_API_TOKEN',
-      !repository && 'BITBUCKET_REPOSITORY'
+      repositories.length === 0 && 'BITBUCKET_REPOSITORY'
     ].filter(Boolean);
     if (missing.length > 0) {
       console.error(`Missing configuration in .env: ${missing.join(', ')}`);
       return null;
+    }
+
+    if (!repository) {
+      repository = repositories.length === 1
+        ? repositories[0]
+        : await select({
+            message: 'Select repository:',
+            choices: repositories.map(r => ({ name: r, value: r }))
+          });
     }
 
     console.log(`Account    : ${email}`);

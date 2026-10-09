@@ -1,67 +1,91 @@
 import { pathToFileURL } from 'url';
 import { SecureShutdown } from '../core/auth/secure-shutdown.js';
-import { runtimeSession, RuntimeSession } from '../core/auth/runtime-session.js';
+import { runtimeSession } from '../core/auth/runtime-session.js';
 import { LoginScreen } from './login.screen.js';
-import { GenerateAllService, GenerateAllResult } from '../core/orchestration/generate-all.service.js';
+import { GenerateAllService } from '../core/orchestration/generate-all.service.js';
 import { GenerationProgressRenderer } from './generation-progress.renderer.js';
 import { LogRedactor } from '../core/logging/log.redactor.js';
+import { ConfigManager } from '../config/config.manager.js';
 
+interface RepoSummary {
+  repository: string;
+  status: 'ok' | 'auth_failed' | 'error';
+  discovered: number;
+  completed: number;
+  cached: number;
+  failed: number;
+  logFilePath?: string;
+  error?: string;
+}
+
+/** Generates context packs for every open PR in every repository listed in BITBUCKET_REPOSITORY. */
 export async function runGenerateAll(): Promise<number> {
   SecureShutdown.registerSignalHandlers();
 
-  let session: RuntimeSession | null = null;
-
-  try {
-    // Credentials come from .env; login already runs the full capability probe.
-    session = await LoginScreen.executeLoginFlow();
-    const activeSession = session && runtimeSession.getSession();
-    if (!activeSession) {
-      return 1;
-    }
-
-    console.log('\nStarting PR data generation orchestration...\n');
-
-    const result: GenerateAllResult = await GenerateAllService.execute(activeSession, {
-      readiness: 'all',
-      forceRefresh: false,
-      concurrency: 2,
-      strategy: 'overwrite',
-      onProgress: (progress) => {
-        GenerationProgressRenderer.render(progress);
-      }
-    });
-
-    console.log('\n========================================================');
-    console.log('          GENERATION SUMMARY — ONE COMMAND              ');
-    console.log('========================================================');
-    console.log(`Account:    ${activeSession.email}`);
-    console.log(`Repository: ${activeSession.repository.workspace}/${activeSession.repository.repoSlug}`);
-    console.log(`Discovered: ${result.totalDiscovered} PR(s)`);
-    console.log(`Filtered:   ${result.totalFiltered} PR(s)`);
-    console.log(`Completed:  ${result.completed}`);
-    console.log(`Cached:     ${result.cached}`);
-    console.log(`Failed:     ${result.failed}`);
-    if (result.logFilePath) {
-      console.log(`Log:        ${result.logFilePath}`);
-    }
-    console.log('========================================================\n');
-
-    if (result.totalFiltered === 0) {
-      console.log('No open pull requests owned by the authenticated user.');
-      console.log('Nothing to generate.');
-      return 0;
-    }
-
-    if (result.failed > 0) {
-      return 2;
-    }
-
-    return 0;
-  } catch (error: any) {
-    const errorMsg = error instanceof Error ? error.stack || error.message : String(error);
-    console.error('\nFatal Error in One-Command Runner:', LogRedactor.redactString(errorMsg));
+  const { repositories } = ConfigManager.credentials();
+  if (repositories.length === 0) {
+    console.error('Missing configuration in .env: BITBUCKET_REPOSITORY');
     return 1;
   }
+
+  const summaries: RepoSummary[] = [];
+
+  for (const repository of repositories) {
+    const summary: RepoSummary = { repository, status: 'ok', discovered: 0, completed: 0, cached: 0, failed: 0 };
+    summaries.push(summary);
+
+    try {
+      // Credentials come from .env; login runs the full capability probe for this repository.
+      const session = (await LoginScreen.executeLoginFlow(repository)) && runtimeSession.getSession();
+      if (!session) {
+        summary.status = 'auth_failed';
+        continue;
+      }
+
+      console.log(`\nGenerating PR data for ${repository}...\n`);
+      const result = await GenerateAllService.execute(session, {
+        readiness: 'all',
+        forceRefresh: false,
+        concurrency: 2,
+        strategy: 'overwrite',
+        onProgress: (progress) => GenerationProgressRenderer.render(progress)
+      });
+
+      summary.discovered = result.totalFiltered;
+      summary.completed = result.completed;
+      summary.cached = result.cached;
+      summary.failed = result.failed;
+      summary.logFilePath = result.logFilePath || undefined;
+    } catch (error: any) {
+      const errorMsg = error instanceof Error ? error.stack || error.message : String(error);
+      summary.status = 'error';
+      summary.error = LogRedactor.redactString(errorMsg);
+    }
+  }
+
+  const account = ConfigManager.credentials().email;
+  console.log('\n========================================================');
+  console.log('          GENERATION SUMMARY — ONE COMMAND              ');
+  console.log('========================================================');
+  console.log(`Account: ${account}\n`);
+  for (const s of summaries) {
+    if (s.status === 'auth_failed') {
+      console.log(`✗ ${s.repository}: authentication / access check failed (see log above)`);
+    } else if (s.status === 'error') {
+      console.log(`✗ ${s.repository}: ${s.error}`);
+    } else {
+      const mark = s.failed > 0 ? '✗' : '✓';
+      console.log(`${mark} ${s.repository}: ${s.discovered} PR(s) | completed ${s.completed} | cached ${s.cached} | failed ${s.failed}`);
+      if (s.logFilePath) console.log(`    Log: ${s.logFilePath}`);
+    }
+  }
+  console.log('\nCompleted:  ' + summaries.reduce((n, s) => n + s.completed, 0));
+  console.log('Failed:     ' + summaries.reduce((n, s) => n + s.failed, 0));
+  console.log('========================================================\n');
+
+  if (summaries.some(s => s.status !== 'ok')) return 1;
+  if (summaries.some(s => s.failed > 0)) return 2;
+  return 0;
 }
 
 const isDirectExecution =

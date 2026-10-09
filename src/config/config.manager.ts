@@ -3,7 +3,8 @@ import { BaseConfig, BaseConfigSchema } from './config.schema.js';
 export interface EnvCredentials {
   email: string;
   token: string;
-  repository: string;
+  /** "workspace/repo" entries from BITBUCKET_REPOSITORY (comma-separated). */
+  repositories: string[];
 }
 
 /**
@@ -34,12 +35,22 @@ export class ConfigManager {
     return this.cached;
   }
 
+  /**
+   * BITBUCKET_REPOSITORY accepts a comma-separated list. Entries without a "/" are
+   * prefixed with BITBUCKET_WORKSPACE, e.g. WORKSPACE=siliconstack + "wec.be,wec.database".
+   */
   static credentials(): EnvCredentials {
     const env = process.env;
+    const workspace = (env.BITBUCKET_WORKSPACE || '').trim();
+    const repositories = (env.BITBUCKET_REPOSITORY || '')
+      .split(',')
+      .map(r => r.trim())
+      .filter(Boolean)
+      .map(r => (r.includes('/') || !workspace ? r : `${workspace}/${r}`));
     return {
       email: (env.BITBUCKET_EMAIL || '').trim(),
       token: (env.BITBUCKET_API_TOKEN || '').trim(),
-      repository: (env.BITBUCKET_REPOSITORY || '').trim()
+      repositories: [...new Set(repositories)]
     };
   }
 }
