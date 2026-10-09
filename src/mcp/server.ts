@@ -1,7 +1,6 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { handleGeneratePRPayload } from './tools/pr_payload.tool.js';
 import { PRContextService } from './context.service.js';
 import { runHealthCheck } from '../healthcheck/healthcheck.js';
 import { Logger } from '../utils/logger.js';
@@ -54,19 +53,6 @@ async function startServer() {
               file_id: { type: 'string', description: 'File ID string from manifest or context.md (e.g. "file_0001").' }
             },
             required: ['pr_url', 'file_id']
-          }
-        },
-        {
-          name: 'generate_pr_payload',
-          description: 'Extracts Bitbucket PR or local Git branch diffs, commits, and AST module categorizations into a compact JSON schema for AI PR description generation.',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              pr_url: { type: 'string', description: 'Full Bitbucket PR URL.' },
-              source_branch: { type: 'string', description: 'Source branch name.' },
-              target_branch: { type: 'string', description: 'Target branch name.' },
-              repo_path: { type: 'string', description: 'Absolute path to target Git repo directory.' }
-            }
           }
         },
         {
@@ -154,10 +140,6 @@ async function startServer() {
         const { pr_url, file_id } = (args || {}) as any;
         const markdown = await PRContextService.getFileContext(pr_url, file_id);
         return { content: [{ type: 'text', text: markdown }] };
-      }
-
-      if (name === 'generate_pr_payload') {
-        return await handleGeneratePRPayload(args);
       }
 
       if (name === 'get_pr_manifest') {

@@ -2,7 +2,7 @@
   "name": "mcp-pr-companion",
   "version": "1.0.0",
   "description": "Local MCP Server for pre-processing Git PR diffs into compact JSON payloads for AI PR description generation",
-  "main": "dist/index.js",
+  "main": "dist/mcp/server.js",
   "bin": {
     "mcp-pr-companion": "bin/cli.js"
   },
@@ -19,7 +19,6 @@
     "cmd": "tsx src/cmd/cmd.runner.ts",
     "cmd:prod": "node dist/cmd/cmd.runner.js",
     "healthcheck": "tsx src/healthcheck/healthcheck.ts",
-    "generate": "node dist/cli/cli.runner.js",
     "test": "tsx tests/unit.test.ts && tsx tests/contract.test.ts && tsx tests/integrity.test.ts && tsx tests/aggregate.test.ts && tsx tests/golden.test.ts && tsx tests/atomic_write.test.ts && tsx tests/orchestration.test.ts"
   },
   "keywords": [

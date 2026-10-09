@@ -1,6 +1,6 @@
 # 🚀 mcp-pr-companion
 
-`mcp-pr-companion` is a dual-interface local pre-processing system (supporting Bitbucket Cloud REST API v2 & local Git diffs) designed to convert Pull Requests into compact, **Adaptive AI Context Packs** optimized for AI Coding Assistants and AI Agents.
+`mcp-pr-companion` is a local pre-processing system for Bitbucket Cloud REST API v2 designed to convert Pull Requests into compact, **Adaptive AI Context Packs** optimized for AI Coding Assistants and AI Agents.
 
 ---
 
@@ -41,7 +41,6 @@
 | `npm run check-deps` | Verifies required Node.js package dependencies. |
 | `npm run install-deps` | Automatically installs missing Node.js dependencies. |
 | `npm run healthcheck` | Performs pre-flight environment checks (Node.js version, Git CLI availability). |
-| `npm run generate` | CLI runner for generating single PR payloads. |
 
 ---
 
@@ -52,7 +51,7 @@ The diagram below illustrates the end-to-end pipeline from PR request to **Adapt
 ```mermaid
 flowchart TD
     A[PR Sync Request / MCP Tool Call] --> B{Request Source}
-    B -- Terminal UI / CLI --> C[Bitbucket API / Local Git]
+    B -- Terminal UI / CLI --> C[Bitbucket API]
     B -- MCP Server Tool Call --> C
 
     C --> D[Authenticate & Filter Author UUID]
