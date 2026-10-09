@@ -15,7 +15,6 @@
   "cache": {
     "memory_entries": 20,
     "ttl_seconds": 300,
-    "persist_raw_diff": true,
     "max_revisions_per_pr": 3,
     "retention_days": 30
   },

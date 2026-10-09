@@ -46,6 +46,11 @@ export class PaginationHelper {
         }
 
         nextUrl = data.next ? String(data.next) : undefined;
+        // Never send the Authorization header to a host other than the one we started on.
+        if (nextUrl && new URL(nextUrl, initialUrl).origin !== new URL(initialUrl).origin) {
+          warnings.push(`Pagination stopped: next page points to a different host.`);
+          return { values, isComplete: false, warnings };
+        }
       } catch (err: any) {
         clearTimeout(timeoutId);
         warnings.push(`Pagination error on page ${pageCount}: ${err.message || String(err)}`);

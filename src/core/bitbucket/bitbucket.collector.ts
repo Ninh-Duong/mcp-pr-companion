@@ -34,39 +34,36 @@ export class BitbucketCollector {
     const sourceHash = metadata.source?.commit?.hash || 'unknown_source';
     const destinationHash = metadata.destination?.commit?.hash || 'unknown_dest';
 
-    // 2. Fetch Commits
-    let commits: any[] = [];
-    let commitsCoverage: 'complete' | 'partial' | 'failed' = 'failed';
-    try {
-      const res = await this.client.getPRCommits(workspace, repoSlug, prId, options);
-      commits = res.values;
-      warnings.push(...res.warnings);
-      commitsCoverage = res.isComplete ? 'complete' : 'partial';
-    } catch (err: any) {
-      warnings.push(`Commits fetch failed: ${Redactor.redact(err.message || String(err))}`);
-    }
+    // 2-4. Commits, diffstat and raw diff are independent: fetch in parallel.
+    const fetchPaged = async (label: string, fn: () => Promise<{ values: any[]; isComplete: boolean; warnings: string[] }>) => {
+      try {
+        const res = await fn();
+        warnings.push(...res.warnings);
+        return { values: res.values, coverage: (res.isComplete ? 'complete' : 'partial') as 'complete' | 'partial' | 'failed' };
+      } catch (err: any) {
+        warnings.push(`${label} fetch failed: ${Redactor.redact(err.message || String(err))}`);
+        return { values: [] as any[], coverage: 'failed' as const };
+      }
+    };
 
-    // 3. Fetch Diffstat
-    let diffstat: any[] = [];
-    let diffstatCoverage: 'complete' | 'partial' | 'failed' = 'failed';
-    try {
-      const res = await this.client.getPRDiffstat(workspace, repoSlug, prId, options);
-      diffstat = res.values;
-      warnings.push(...res.warnings);
-      diffstatCoverage = res.isComplete ? 'complete' : 'partial';
-    } catch (err: any) {
-      warnings.push(`Diffstat fetch failed: ${Redactor.redact(err.message || String(err))}`);
-    }
+    const [commitsRes, diffstatRes, diffRes] = await Promise.all([
+      fetchPaged('Commits', () => this.client.getPRCommits(workspace, repoSlug, prId, options)),
+      fetchPaged('Diffstat', () => this.client.getPRDiffstat(workspace, repoSlug, prId, options)),
+      this.client.getPRDiffText(workspace, repoSlug, prId, options).then(
+        text => ({ text, coverage: 'complete' as 'complete' | 'failed' }),
+        (err: any) => {
+          warnings.push(`Diff download failed: ${Redactor.redact(err.message || String(err))}`);
+          return { text: '', coverage: 'failed' as const };
+        }
+      )
+    ]);
 
-    // 4. Fetch Raw Diff
-    let rawDiff = '';
-    let diffCoverage: 'complete' | 'partial' | 'failed' = 'failed';
-    try {
-      rawDiff = await this.client.getPRDiffText(workspace, repoSlug, prId, options);
-      diffCoverage = 'complete';
-    } catch (err: any) {
-      warnings.push(`Diff download failed: ${Redactor.redact(err.message || String(err))}`);
-    }
+    const commits = commitsRes.values;
+    const diffstat = diffstatRes.values;
+    const rawDiff = diffRes.text;
+    const commitsCoverage = commitsRes.coverage;
+    const diffstatCoverage = diffstatRes.coverage;
+    const diffCoverage = diffRes.coverage;
 
     return {
       metadata,

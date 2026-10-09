@@ -81,10 +81,7 @@ export class PRContextService {
     const parsed = PRRegistry.parseAndValidateUrl(prUrl);
 
     // Coerce numeric input to string ID format (e.g. 1 -> "file_0001")
-    let normalizedId = typeof fileId === 'number' ? `file_${String(fileId).padStart(4, '0')}` : String(fileId);
-    if (/^\d+$/.test(normalizedId)) {
-      normalizedId = `file_${String(parseInt(normalizedId, 10)).padStart(4, '0')}`;
-    }
+    const normalizedId = OutputReader.normalizeFileId(fileId);
 
     const detailKey = `${parsed.workspace}:${parsed.repoSlug}:${parsed.prId}:${normalizedId}`;
     const ttl = this.getTTL();

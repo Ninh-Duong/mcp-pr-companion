@@ -96,7 +96,8 @@ export class DiffParser {
         continue;
       }
 
-      if (line.startsWith('--- ')) {
+      // File headers only appear before the first hunk; inside a hunk '--- x' is a deleted line '-- x'.
+      if (!currentHunk && line.startsWith('--- ')) {
         currentFile.headerLines.push(line);
         const p = line.substring(4).trim();
         if (p === '/dev/null') {
@@ -108,7 +109,7 @@ export class DiffParser {
         continue;
       }
 
-      if (line.startsWith('+++ ')) {
+      if (!currentHunk && line.startsWith('+++ ')) {
         currentFile.headerLines.push(line);
         const p = line.substring(4).trim();
         if (p === '/dev/null') {
@@ -150,7 +151,7 @@ export class DiffParser {
 
       // Process lines within a hunk
       if (currentHunk) {
-        if (line.startsWith('+') && !line.startsWith('+++')) {
+        if (line.startsWith('+')) {
           const content = line.substring(1);
           currentHunk.lines.push({
             type: 'add',
@@ -158,7 +159,7 @@ export class DiffParser {
             content
           });
           currentFile.additions++;
-        } else if (line.startsWith('-') && !line.startsWith('---')) {
+        } else if (line.startsWith('-')) {
           const content = line.substring(1);
           currentHunk.lines.push({
             type: 'delete',
