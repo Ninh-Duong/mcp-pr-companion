@@ -1,5 +1,5 @@
 import assert from 'assert';
-import { AccountPolicy, ALLOWED_BITBUCKET_EMAIL } from '../src/core/auth/account-policy.js';
+import { AccountPolicy } from '../src/core/auth/account-policy.js';
 import { normalizeUuid } from '../src/core/auth/current-user.resolver.js';
 import { PROwnershipPolicy } from '../src/core/auth/pr-ownership.policy.js';
 import { PRViewFilter } from '../src/core/discovery/pr-view-filter.js';
@@ -14,10 +14,12 @@ async function runOwnershipAndFilterTests() {
 
   // 1. Account Policy Tests
   console.log('1. Account Policy Validation:');
-  assert(AccountPolicy.isEmailAllowed(ALLOWED_BITBUCKET_EMAIL), 'Allowed email is accepted');
-  assert(AccountPolicy.isEmailAllowed(' NINH.DUONG@siliconstack.com.au '), 'Email normalization handles uppercase & whitespace');
-  assert(!AccountPolicy.isEmailAllowed('other.user@siliconstack.com.au'), 'Unallowed email is rejected');
-  console.log('  ✓ AccountPolicy enforces ninh.duong@siliconstack.com.au restriction');
+  const allowed = ['a.user@example.com'];
+  assert(AccountPolicy.isEmailAllowed('a.user@example.com', allowed), 'Allowed email is accepted');
+  assert(AccountPolicy.isEmailAllowed(' A.USER@example.com ', allowed), 'Email normalization handles uppercase & whitespace');
+  assert(!AccountPolicy.isEmailAllowed('other.user@example.com', allowed), 'Unallowed email is rejected');
+  assert(AccountPolicy.isEmailAllowed('anyone@example.com', []), 'Empty allow-list permits any account');
+  console.log('  ✓ AccountPolicy enforces allowed_emails from config');
 
   // 2. UUID Normalization Tests
   console.log('\n2. UUID Normalization:');

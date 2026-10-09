@@ -6,6 +6,7 @@
   "ticket_prefix": ["WCE-", "PROJ-", "JIRA-"],
   "default_target_branch": "main",
   "default_pr_url": "",
+  "allowed_emails": [],
   "sync": {
     "concurrency": 2,
     "request_timeout_ms": 30000,
