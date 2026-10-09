@@ -2,6 +2,8 @@ import { select } from '@inquirer/prompts';
 import { runtimeSession } from '../core/auth/runtime-session.js';
 import { PRListScreen } from './pr-list.screen.js';
 import { GenerateMenu } from './generate.menu.js';
+import { LoginScreen } from './login.screen.js';
+import { ConfigManager } from '../config/config.manager.js';
 
 export class MainMenu {
   static displayHeader(): void {
@@ -25,19 +27,26 @@ export class MainMenu {
     while (true) {
       this.displayHeader();
 
-      const choice = await select({
-        message: 'Main Menu Options:',
-        choices: [
-          { name: '1. View current pull requests', value: 'view_prs' },
-          { name: '2. Generate PR data', value: 'generate_data' },
-          { name: '3. Exit CLI', value: 'exit' }
-        ]
-      });
+      const choices = [
+        { name: '1. View current pull requests', value: 'view_prs' },
+        { name: '2. Generate PR data', value: 'generate_data' }
+      ];
+      if (ConfigManager.credentials().repositories.length > 1) {
+        choices.push({ name: `${choices.length + 1}. Switch repository`, value: 'switch_repo' });
+      }
+      choices.push({ name: `${choices.length + 1}. Exit CLI`, value: 'exit' });
+
+      const choice = await select({ message: 'Main Menu Options:', choices });
 
       if (choice === 'view_prs') {
         await PRListScreen.render();
       } else if (choice === 'generate_data') {
         await GenerateMenu.displayMenu();
+      } else if (choice === 'switch_repo') {
+        // On failure the previous repository session stays active.
+        if (!(await LoginScreen.executeLoginFlow())) {
+          await new Promise(r => setTimeout(r, 3000));
+        }
       } else if (choice === 'exit') {
         console.log('\nExiting MCP PR Companion. Goodbye!');
         process.exit(0);
