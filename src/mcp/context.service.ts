@@ -4,7 +4,6 @@ import { BitbucketCollector } from '../core/bitbucket/bitbucket.collector.js';
 import { PRManifestV4 } from '../core/output/schema/manifest.v4.schema.js';
 import { FileChangeV4 } from '../core/output/schema/file_change.v4.schema.js';
 import { OutputReader } from '../core/output/output.reader.js';
-import { ConfigManager } from '../config/config.manager.js';
 import { FileIndexEntryV4 } from '../core/output/schema/file_index.v4.schema.js';
 
 export class PRContextService {
@@ -12,15 +11,13 @@ export class PRContextService {
   private static fileChangeCache = new Map<string, { change: FileChangeV4; diffContent?: string; timestamp: number }>();
   private static inFlightRequests = new Map<string, Promise<PRManifestV4>>();
 
+  // In-memory cache only; the on-disk revision store is the source of truth.
   private static getTTL(): number {
-    const config = ConfigManager.loadBase();
-    const ttlMinutes = (config.privacy as any)?.cache_ttl_minutes || (config.cache as any)?.retention_days * 24 * 60 || 60;
-    return ttlMinutes * 60 * 1000;
+    return 30 * 24 * 60 * 60 * 1000;
   }
 
   private static getMaxEntries(): number {
-    const config = ConfigManager.loadBase();
-    return (config.privacy as any)?.max_ram_cache_entries || (config.cache as any)?.max_revisions_per_pr * 10 || 20;
+    return 30;
   }
 
   static async getManifest(prUrl: string, refresh = false): Promise<PRManifestV4> {
