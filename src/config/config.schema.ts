@@ -9,6 +9,7 @@ export const BaseConfigSchema = z.object({
   ticket_prefix: z.array(z.string()).default(['WCE-', 'PROJ-', 'JIRA-']),
   default_target_branch: z.string().default('main'),
   default_pr_url: z.string().default(''),
+  allowed_emails: z.array(z.string()).default([]),
   privacy: PrivacyConfigSchema,
   sync: z.object({
     concurrency: z.number().default(2),
