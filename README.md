@@ -1,151 +1,213 @@
-# 🚀 mcp-pr-companion
+# mcp-pr-companion
 
-`mcp-pr-companion` is a local pre-processing system for Bitbucket Cloud REST API v2 designed to convert Pull Requests into compact, **Adaptive AI Context Packs** optimized for AI Coding Assistants and AI Agents.
+Công cụ đọc Pull Request trên **Bitbucket Cloud** và biến nó thành một bộ tài liệu ngắn gọn (**context pack**) để AI (Claude, Copilot, Cursor…) đọc hiểu PR nhanh, tốn ít token.
 
----
+Bạn có thể dùng theo 3 cách:
 
-## 📌 1. Features Overview
-
-* **Adaptive AI Context Strategy**:
-  - Dynamically tailors context pack structures based on PR size and risk level across 4 modes: `skim`, `standard`, `inspect_priority_files`, and `deep_review`.
-  - Automatically generates an explicit **Read Strategy** section guiding AI agents on required next files, optional next files, and skipped categories to optimize token efficiency (**70% - 95% token savings**).
-  - Moves full file lists into `files.md`, keeping `context.md` ultra-compact (0.5 – 1KB for comment-only PRs).
-* **Schema v4 & Atomic Revision Storage**:
-  - Multi-revision storage engine featuring atomic write staging to prevent partial writes.
-  - Manages active revision pointers via `current.json` (`context_path`, `files_summary_path`, `actions_path`, `manifest_path`, `ai_reading_mode`).
-* **MCP Server & Dual-Interface Architecture**:
-  - **Local MCP Server over stdio**: Exposes MCP tools (`get_pr_context_pack`, `get_pr_file_context`, `search_pr_files`, `get_pr_manifest`, `get_pr_sync_status`, `refresh_pr_data`) for direct integration with AI IDEs and Agents.
-  - **Terminal UI (`npm run cmd`)**: Authenticates with the API token from `.env`, then lets you view your open pull requests and generate context packs.
-  - **One-Command Auto Sync (`npm run mcp-pr-companion`)**: Automated sequential discovery, filtering, and context pack generation for all OPEN pull requests owned by the user.
-* **AST Analyzer & Secret Redacting Security**:
-  - Classifies change kinds (`comment_only`, `functional_logic`, `public_api`, `database_schema`, `auth_security`, `configuration`, etc.).
-  - Extracts source code AST symbols (functions, methods, HTTP routes).
-  - Automatically scans and redacts tokens/passwords via `Redactor` (`ATBB****abcd`).
-  - Enforces account identity locking (`author.uuid`) to prevent cross-account PR data leakage.
+| Cách dùng | Lệnh | Khi nào dùng |
+|---|---|---|
+| **Menu trong terminal** | `.\run.cmd cmd` | Xem danh sách PR của bạn, chọn PR để tạo context |
+| **Chạy 1 lệnh tự động** | `.\run.cmd generate-all` | Tạo context cho **tất cả** PR đang mở của bạn, không cần thao tác |
+| **MCP server** | `.\run.cmd` | Để AI trong IDE tự gọi lấy context PR |
 
 ---
 
-## 🛠️ 2. Setup & Run
+## 1. Bắt đầu nhanh (3 bước)
 
-### Quick start (any machine)
+### Bước 1: Lấy code
 
 ```bash
-git clone <repo-url> && cd mcp-pr-companion
-./run.sh cmd          # Linux / macOS
-run.cmd cmd           # Windows
+git clone <repo-url>
+cd mcp-pr-companion
 ```
 
-The first run prepares everything automatically and stops once to ask for configuration:
+### Bước 2: Chạy lần đầu
 
-1. **Node.js**: `run.cmd` / `run.sh` install Node.js LTS if it is missing or older than 20.12 (Windows: `winget`; macOS: `brew`; Linux: NodeSource via `apt-get`/`dnf`/`yum`, needs `sudo`).
-2. **Dependencies**: `bin/cli.js` runs `npm ci` whenever `package-lock.json` changes (needs access to the npm registry).
-3. **Build**: rebuilds `dist/` whenever `src/` changes.
-4. **Configuration**: creates `.env` from `.env.example` and lists the values to fill in. Fill them in and run the same command again.
-
-If Node.js ≥ 20.12 is already installed you can skip the launcher and use `node bin/cli.js <command>` or the npm scripts below.
-
-### Configuration (`.env`)
-
-All settings, including credentials, come from environment variables. `.env` is git-ignored and docker-ignored; only the empty template `.env.example` is committed. Variables already set in the real environment (CI, Docker `--env-file`) take precedence over `.env`, and `.env` is then optional. Nothing is ever prompted for or written to disk.
-
-| Variable | Required | Description |
-|---|---|---|
-| `BITBUCKET_EMAIL` | ✅ | Atlassian account email |
-| `BITBUCKET_API_TOKEN` | ✅ | Bitbucket API token, read-only scopes: `read:user`, `read:pullrequest`, `read:repository` |
-| `BITBUCKET_REPOSITORY` | ✅ for `cmd` / `generate-all` | `workspace/repo` (the MCP server takes the repository from each PR URL) |
-| `ALLOWED_EMAILS` | | Comma-separated accounts allowed to run the tool (empty = any) |
-| `TICKET_PREFIXES` | | Default `WCE-,PROJ-,JIRA-` |
-| `PRIVACY_MODE`, `PRIVACY_REMOVE_AUTHOR`, `PRIVACY_FILE_PATH_MODE`, `PRIVACY_MAX_COMMIT_SUBJECTS` | | Output privacy settings (defaults in `.env.example`) |
-| `AI_CONTEXT_ROOT`, `AI_CONTEXT_COMPANY`, `AI_CONTEXT_APP` | | Output location (default `ai-context/siliconstack/...`) |
-
-### Commands
-
-| Command | Description |
+| Hệ điều hành | Lệnh |
 |---|---|
-| `npm run cmd` (`node bin/cli.js cmd`) | **Terminal UI**: view open PRs, sync a PR, generate context packs. |
-| `npm run mcp-pr-companion` (`node bin/cli.js generate-all`) | **One-command run**: discovers your open PRs and generates context packs, no interaction. |
-| `npm start` (`node bin/cli.js server`) | **MCP server** over stdio for AI IDEs / agents. |
-| `npm run healthcheck` (`node bin/cli.js check`) | Reports Node.js, dependencies, build and `.env` status without changing anything (exit 1 if not ready). |
-| `npm run prepare-app` (`node bin/cli.js prepare`) | Installs dependencies and builds without starting anything (used by Docker/CI). |
-| `npm run dev` | MCP server from TypeScript sources via `tsx` (developers; reads `.env`). |
-| `npm run build` / `npm test` | Compile `src/` to `dist/` / run all test files in isolated temp directories. |
+| Windows (PowerShell) | `.\run.cmd check` |
+| Windows (cmd) | `run.cmd check` |
+| macOS / Linux | `./run.sh check` |
 
-### MCP client configuration
+Lần chạy đầu, công cụ **tự chuẩn bị mọi thứ**, bạn không cần cài gì trước:
 
-Point your MCP client at the bootstrap so it always starts from a ready state:
+1. Chưa có Node.js (hoặc bản cũ hơn 20.12) → tự cài Node.js.
+2. Chưa có thư viện → tự chạy `npm ci`.
+3. Chưa build → tự build.
+4. Chưa có file cấu hình → tự tạo file `.env` rồi **dừng lại** để bạn điền thông tin.
+
+### Bước 3: Điền file `.env`
+
+Mở file `.env` ở thư mục gốc và điền 3 dòng:
+
+```ini
+BITBUCKET_EMAIL=ten.ban@siliconstack.com.au
+BITBUCKET_API_TOKEN=ATATT...
+BITBUCKET_REPOSITORY=siliconstack/wec.be
+```
+
+Chạy lại `.\run.cmd check`. Thấy toàn dấu ✓ là xong:
+
+```
+✓ Node.js: Node.js 22.20.0 (requires >=20.12)
+✓ Dependencies: dependencies match package-lock.json
+✓ Build: dist/ is up to date
+✓ Config (.env): required settings present
+```
+
+> **Cách tạo API token:** Bitbucket → *Personal settings* → *API tokens* → *Create API token with scopes*.
+> Chỉ chọn 3 quyền **đọc**: `read:user:bitbucket`, `read:pullrequest:bitbucket`, `read:repository:bitbucket`.
+> Không cấp quyền Write / Admin / Delete.
+
+---
+
+## 2. Sử dụng hằng ngày
+
+```powershell
+.\run.cmd cmd            # mở menu: xem PR, Sync 1 PR, Generate nhiều PR
+.\run.cmd generate-all   # tạo context cho tất cả PR đang mở của bạn
+.\run.cmd check          # kiểm tra môi trường (không thay đổi gì)
+```
+
+Đã có Node.js ≥ 20.12 thì có thể dùng lệnh npm, kết quả giống hệt:
+
+| Lệnh npm | Tương đương |
+|---|---|
+| `npm run cmd` | `.\run.cmd cmd` |
+| `npm run mcp-pr-companion` | `.\run.cmd generate-all` |
+| `npm start` | `.\run.cmd` (MCP server) |
+| `npm run healthcheck` | `.\run.cmd check` |
+
+> Trong **PowerShell** phải gõ `.\run.cmd` (có `.\` ở đầu). Gõ `run.cmd` sẽ báo không tìm thấy lệnh.
+
+### Kết quả nằm ở đâu?
+
+```text
+ai-context/siliconstack/<workspace>/<repo>/pr_<số PR>/
+├── context.md      ← MỞ FILE NÀY TRƯỚC: tóm tắt PR + gợi ý nên đọc file nào
+├── files.md        ← danh sách tất cả file thay đổi
+├── files/          ← chi tiết từng file (file_0001.md, file_0002.md…)
+├── manifest.json   ← dữ liệu dạng JSON
+└── revisions/      ← lịch sử các lần tạo
+```
+
+Log chạy nằm trong `Logs/<ngày>/`.
+
+---
+
+## 3. Dùng với AI trong IDE (MCP server)
+
+Thêm vào file cấu hình MCP của IDE (Claude Code, Cursor, VS Code…), sửa lại đường dẫn cho đúng máy bạn:
 
 ```json
-{ "mcpServers": { "mcp-pr-companion": { "command": "node", "args": ["/absolute/path/to/mcp-pr-companion/bin/cli.js"] } } }
+{
+  "mcpServers": {
+    "mcp-pr-companion": {
+      "command": "node",
+      "args": ["D:/Visual Studio Code/mcp-pr-companion/bin/cli.js"]
+    }
+  }
+}
 ```
 
-### Docker
+Sau đó chỉ cần đưa link PR cho AI, ví dụ: *"Tóm tắt PR https://bitbucket.org/siliconstack/wec.be/pull-requests/4565"*.
+
+Các tool AI có thể gọi:
+
+| Tool | Tác dụng |
+|---|---|
+| `get_pr_context_pack` | Lấy bản tóm tắt PR (`context.md`). **Dùng cái này trước** |
+| `get_pr_file_context` | Xem chi tiết 1 file thay đổi (vd `file_0001`) |
+| `get_pr_file_changes` | Lấy diff của 1 file |
+| `search_pr_files` | Tìm file theo đường dẫn, ngôn ngữ, mức rủi ro… |
+| `get_pr_manifest` | Lấy dữ liệu PR dạng JSON |
+| `get_pr_sync_status` | Xem PR đã có dữ liệu chưa |
+| `refresh_pr_data` | Tải lại PR mới nhất từ Bitbucket |
+
+---
+
+## 4. Cấu hình (`.env`)
+
+Mọi cấu hình nằm trong file `.env`. Danh sách đầy đủ có trong `.env.example`.
+
+| Biến | Bắt buộc | Ý nghĩa |
+|---|---|---|
+| `BITBUCKET_EMAIL` | ✅ | Email tài khoản Atlassian |
+| `BITBUCKET_API_TOKEN` | ✅ | API token (chỉ quyền đọc) |
+| `BITBUCKET_REPOSITORY` | ✅ (với `cmd`, `generate-all`) | Repo dạng `workspace/repo`. MCP server không cần vì lấy repo từ link PR |
+| `ALLOWED_EMAILS` | | Chỉ cho phép các email này chạy tool (phân cách bằng dấu phẩy). Để trống = ai cũng chạy được |
+| `TICKET_PREFIXES` | | Tiền tố mã ticket, mặc định `WCE-,PROJ-,JIRA-` |
+| `PRIVACY_*` | | Mức ẩn thông tin trong kết quả (mặc định đã an toàn) |
+| `AI_CONTEXT_ROOT` | | Thư mục lưu kết quả, mặc định `ai-context` |
+
+### 🔒 Bảo mật
+
+- `.env` **không bao giờ bị push lên git** (đã có trong `.gitignore`) và không bị đưa vào Docker image.
+- Token chỉ nằm trong `.env` và bộ nhớ khi chạy. Công cụ không lưu token ra file nào khác, cũng không hỏi nhập token.
+- Chỉ file mẫu `.env.example` (để trống) được commit.
+- Token và mật khẩu lỡ nằm trong diff, cùng email trong tiêu đề, mô tả và commit message, được tự động che trước khi ghi ra kết quả.
+
+---
+
+## 5. Chạy bằng Docker (tuỳ chọn)
+
+Dùng khi muốn chạy giống hệt nhau trên mọi máy (QC, CI, server):
 
 ```bash
 docker build -t mcp-pr-companion .
-docker run --rm -i  --env-file .env -v "$PWD/ai-context:/app/ai-context" mcp-pr-companion                # MCP server (stdio)
-docker run --rm -it --env-file .env -v "$PWD/ai-context:/app/ai-context" mcp-pr-companion cmd            # Terminal UI
-docker run --rm     --env-file .env -v "$PWD/ai-context:/app/ai-context" mcp-pr-companion generate-all   # One-command run
-```
 
-Credentials are passed at run time with `--env-file` and are never baked into the image.
+# Tạo context cho tất cả PR
+docker run --rm --env-file .env -v "$PWD/ai-context:/app/ai-context" mcp-pr-companion generate-all
+
+# Menu trong terminal
+docker run --rm -it --env-file .env -v "$PWD/ai-context:/app/ai-context" mcp-pr-companion cmd
+
+# MCP server
+docker run --rm -i --env-file .env -v "$PWD/ai-context:/app/ai-context" mcp-pr-companion
+```
 
 ---
 
-## 🔄 3. Feature Workflow
+## 6. Gặp lỗi?
 
-The diagram below illustrates the end-to-end pipeline from PR request to **Adaptive AI Context Pack** generation and MCP serving:
+Luôn chạy `.\run.cmd check` trước để xem thiếu gì.
+
+| Thông báo | Cách xử lý |
+|---|---|
+| `Fill in BITBUCKET_... in .env` | Điền biến còn thiếu vào `.env` |
+| `Email or API token invalid` | Sai email/token hoặc token hết hạn → tạo token mới, sửa `.env` |
+| `Repository read access` ✗ | Sai `BITBUCKET_REPOSITORY` hoặc token thiếu quyền `read:repository` |
+| `npm ci failed` | Máy không vào được npm registry → kiểm tra mạng/proxy |
+| `Node.js ... requires >=20.12` | Chạy bằng `.\run.cmd` / `./run.sh` để tự cài Node, hoặc cài từ https://nodejs.org |
+| `'run.cmd' is not recognized` | Trong PowerShell phải gõ `.\run.cmd` |
+| Linux báo cần `sudo` | Việc tự cài Node cần quyền admin; nhập mật khẩu khi được hỏi |
+
+---
+
+## 7. Cách hoạt động (tóm tắt)
 
 ```mermaid
-flowchart TD
-    A[PR Sync Request / MCP Tool Call] --> B{Request Source}
-    B -- Terminal UI / CLI --> C[Bitbucket API]
-    B -- MCP Server Tool Call --> C
-
-    C --> D[Authenticate & Filter Author UUID]
-    D --> E[Fetch Diffs, Commits & Metadata]
-    
-    E --> F[AST Analyzer & Risk Analyzer]
-    F --> G[Classify Change Kind & Risk Tags]
-    
-    G --> H[ContextModeClassifier]
-    H -->|Evaluate File Count & Risk Level| I{Select Context Mode}
-    
-    I -- total_files <= 3 & comment_only --> J[Mode: skim]
-    I -- standard logic changes --> K[Mode: standard]
-    I -- public_api / database_schema --> L[Mode: inspect_priority_files]
-    I -- overall_risk high/critical or files > 30 --> M[Mode: deep_review]
-
-    J --> N[Generate Read Strategy & Markdown Context]
-    K --> N
-    L --> N
-    M --> N
-
-    N --> O[Atomic Revision Writer]
-    O --> P[Persist Staging Directory Atomically]
-    P --> P1[context.md - Adaptive Pack]
-    P --> P2[files.md - Full File Index]
-    P --> P3[files/file_XXXX.md - File Details]
-    P --> P4[manifest.json & current.json]
-
-    P1 & P2 & P3 --> Q[Serve MCP Client / AI Agent]
+flowchart LR
+    A[Link PR / Menu] --> B[Gọi Bitbucket API]
+    B --> C[Phân tích diff: loại thay đổi, mức rủi ro]
+    C --> D[Che thông tin nhạy cảm]
+    D --> E[Ghi context pack]
+    E --> F[AI đọc qua MCP]
 ```
+
+- PR nhỏ (ví dụ chỉ sửa comment) được tóm tắt rất ngắn. PR lớn hoặc rủi ro cao (API, database, bảo mật) được đánh dấu file nào cần đọc kỹ.
+- Ghi dữ liệu theo kiểu "an toàn": lỗi giữa chừng không làm hỏng dữ liệu cũ.
 
 ---
 
-## 📁 Runtime Directory & Context Output Layout
+## 8. Dành cho developer
 
-Generated context packs are structured as follows:
-
-```text
-ai-context/{company}/{app}/{feature}/{repo}_{PR-ID}/
-├── context.md          # Primary AI Entrypoint (Adaptive Markdown Context Pack)
-├── files.md            # Complete Changed Files Index & Categorization Table
-├── actions.md          # Tool Action Summary & Coverage Metadata
-├── current.json        # Pointer to Active Revision & Reading Mode
-├── manifest.json       # Structured Metadata Manifest (v4 Schema)
-├── files/              # Per-file AI Detail Markdown Files
-│   ├── file_0001.md
-│   └── file_0002.md
-└── revisions/          # Revision History Subdirectory
-    └── rev_xxxx_yyyy/
+```bash
+npm run dev      # chạy MCP server từ source TypeScript (đọc .env)
+npm run build    # build src/ → dist/
+npm test         # chạy toàn bộ test (trong thư mục tạm, không đụng dữ liệu thật)
 ```
+
+- `run.cmd` / `run.sh`: kiểm tra và tự cài Node.js.
+- `bin/cli.js`: kiểm tra thư viện, build và `.env`, sau đó khởi động app.
+- `src/`: mã nguồn. `tests/`: test.
