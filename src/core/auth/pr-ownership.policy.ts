@@ -16,9 +16,4 @@ export class PROwnershipPolicy {
     return normAuthor === normUser;
   }
 
-  static assertOwnedByCurrentUser(prAuthorUuid: string | null | undefined, currentUserUuid: string): void {
-    if (!this.belongsToUser(prAuthorUuid, currentUserUuid)) {
-      throw new Error(`Security Violation: PR does not belong to the current authenticated user (Author UUID: ${prAuthorUuid || 'N/A'}, Current User UUID: ${currentUserUuid})`);
-    }
-  }
 }

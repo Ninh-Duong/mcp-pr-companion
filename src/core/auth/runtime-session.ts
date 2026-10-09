@@ -74,9 +74,6 @@ class RuntimeSessionManager {
     SessionStore.clearSession();
   }
 
-  public isAuthenticated(): boolean {
-    return !!(this.session && this.session.token && this.session.currentUserUuid);
-  }
 }
 
 export const runtimeSession = new RuntimeSessionManager();

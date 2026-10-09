@@ -1,7 +1,6 @@
 import { BitbucketCollector } from '../bitbucket/bitbucket.collector.js';
 import { DataStore } from '../storage/data.store.js';
 import { PRGenerationJobState, GenerationStage } from './generation.types.js';
-import { CacheDecisionService } from './cache-decision.service.js';
 
 export class GenerationJob {
   static async executeJob(
