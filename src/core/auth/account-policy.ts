@@ -1,13 +1,15 @@
-export const ALLOWED_BITBUCKET_EMAIL = 'ninh.duong@siliconstack.com.au';
+import { ConfigManager } from '../../config/config.manager.js';
 
 export class AccountPolicy {
   static normalizeEmail(email: string): string {
     return email ? email.trim().toLowerCase() : '';
   }
 
-  static isEmailAllowed(email: string): boolean {
+  // Empty `allowed_emails` in base config = any account is allowed.
+  static isEmailAllowed(email: string, allowed: string[] = ConfigManager.loadBase().allowed_emails): boolean {
+    if (allowed.length === 0) return true;
     const normalized = this.normalizeEmail(email);
-    return normalized === ALLOWED_BITBUCKET_EMAIL;
+    return allowed.some(a => this.normalizeEmail(a) === normalized);
   }
 
   static validateEmail(email: string): { allowed: boolean; reason?: string } {
@@ -18,7 +20,7 @@ export class AccountPolicy {
     if (!this.isEmailAllowed(normalized)) {
       return {
         allowed: false,
-        reason: `Access denied. This CLI only supports account: ${ALLOWED_BITBUCKET_EMAIL}`
+        reason: 'Access denied. This account is not listed in allowed_emails (.mcp-pr-companion/config/base.json).'
       };
     }
     return { allowed: true };

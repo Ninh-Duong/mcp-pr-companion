@@ -1,9 +1,7 @@
-import fs from 'fs';
 import path from 'path';
 import { RawPRRevision } from '../bitbucket/bitbucket.types.js';
 import { ConfigManager } from '../../config/config.manager.js';
 import { GitParser } from '../git/git.parser.js';
-import { OpaqueIDGenerator } from './opaque.id.js';
 import { RedactionTracker } from '../privacy/redaction.report.js';
 import { PIISanitizer } from '../privacy/pii.sanitizer.js';
 import { SecretScanner } from '../privacy/secret.scanner.js';
@@ -22,20 +20,16 @@ import { FileChangeV4 } from '../output/schema/file_change.v4.schema.js';
 import { PRCoverageV4 } from '../output/schema/coverage.v4.schema.js';
 
 export class DataStore {
-  private static rawDataDir = path.resolve(process.cwd(), '.mcp-pr-companion', 'data', 'raw');
-
   static getActiveRevision(workspace: string, repoSlug: string, prId: number) {
     return OutputReader.getActiveRevision(workspace, repoSlug, prId);
   }
 
   static getFileDetail(workspace: string, repoSlug: string, prId: number, fileId: string | number) {
-    const normalizedId = typeof fileId === 'number' ? `file_${String(fileId).padStart(4, '0')}` : fileId;
-    return OutputReader.getFileChange(workspace, repoSlug, prId, normalizedId);
+    return OutputReader.getFileChange(workspace, repoSlug, prId, fileId);
   }
 
   /**
-   * Persists Raw Bitbucket payload internally (debug/retention only)
-   * and generates Agent-Optimized Output Schema v4.
+   * Generates Agent-Optimized Output Schema v4 from a raw Bitbucket revision.
    */
   static saveRevision(
     workspace: string,
@@ -46,15 +40,6 @@ export class DataStore {
     const config = ConfigManager.loadBase();
     const privacy = config.privacy;
     const tracker = new RedactionTracker();
-
-    // 1. Save Internal Raw Cache (For debugging, never exposed to MCP / agent output)
-    const rawRepoDir = path.join(this.rawDataDir, OpaqueIDGenerator.getRepositoryID(workspace, repoSlug), `pr_${prId}`);
-    fs.mkdirSync(rawRepoDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(rawRepoDir, `raw_rev_${OpaqueIDGenerator.getRevisionID(rawRev.sourceHash, rawRev.destinationHash).substring(0, 12)}.json`),
-      JSON.stringify(rawRev, null, 2),
-      'utf-8'
-    );
 
     // 2. Allowlist projection from raw response
     const projectedMeta = BitbucketAllowlistProjector.projectMetadata(rawRev.metadata, privacy.remove_author);
@@ -90,6 +75,12 @@ export class DataStore {
     const importantFileIds: string[] = [];
     let riskyFilesCount = 0;
 
+    const diffByPath = new Map<string, (typeof parsedDiff.files)[number]>();
+    for (const f of parsedDiff.files) {
+      if (f.oldPath && !diffByPath.has(f.oldPath)) diffByPath.set(f.oldPath, f);
+      if (f.newPath) diffByPath.set(f.newPath, f);
+    }
+
     projectedDiffstat.forEach((item, idx) => {
       const fileIndex = idx + 1;
       const fileIdStr = `file_${String(fileIndex).padStart(4, '0')}`;
@@ -102,7 +93,7 @@ export class DataStore {
       if (isSensitive) tracker.recordOmittedFile();
 
       // Find parsed diff file matching this path
-      const matchedDiff = parsedDiff.files.find(f => f.newPath === originalPath || f.oldPath === originalPath) || {
+      const matchedDiff = diffByPath.get(originalPath) || {
         oldPath: item.old_path || null,
         newPath: item.new_path || originalPath,
         status: item.status as any,
@@ -198,13 +189,21 @@ export class DataStore {
       overallLevel = 'low';
     }
 
+    const fetchWarning = rawRev.warnings.length > 0 ? SecretScanner.scanAndRedact(rawRev.warnings.join('; ')) : null;
+    const section = (status: 'complete' | 'partial' | 'failed', items: number) => ({
+      status,
+      truncated: status === 'partial',
+      items_fetched: items,
+      warning: status === 'complete' ? null : fetchWarning
+    });
+
     const coverageData: PRCoverageV4 = {
       schema_version: '4.0',
       sections: {
-        metadata: { status: 'complete', truncated: false, items_fetched: 1, warning: null },
-        commits: { status: 'complete', truncated: false, items_fetched: projectedCommits.length, warning: null },
-        diffstat: { status: 'complete', truncated: false, items_fetched: projectedDiffstat.length, warning: null },
-        diff: { status: 'complete', truncated: false, items_fetched: parsedDiff.files.length, warning: null },
+        metadata: section(rawRev.coverage.metadata, 1),
+        commits: section(rawRev.coverage.commits, projectedCommits.length),
+        diffstat: section(rawRev.coverage.diffstat, projectedDiffstat.length),
+        diff: section(rawRev.coverage.diff, parsedDiff.files.length),
         file_analysis: { status: 'complete', truncated: false, items_fetched: fileEntries.length, warning: null },
         symbols: { status: 'complete', truncated: false, items_fetched: Array.from(fileChangesMap.values()).reduce((sum, f) => sum + f.change.symbols.length, 0), warning: null },
         comments: { status: 'not_fetched', truncated: false, items_fetched: 0, warning: null },

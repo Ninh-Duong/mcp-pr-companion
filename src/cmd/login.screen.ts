@@ -2,7 +2,7 @@ import { input, password, select } from '@inquirer/prompts';
 import { AuthService } from '../core/auth/auth.service.js';
 import { AuthProgressRenderer } from './auth-progress.renderer.js';
 import { RuntimeSession, runtimeSession } from '../core/auth/runtime-session.js';
-import { AccountPolicy, ALLOWED_BITBUCKET_EMAIL } from '../core/auth/account-policy.js';
+import { AccountPolicy } from '../core/auth/account-policy.js';
 import { SessionStore } from '../core/auth/session.store.js';
 
 export interface LoginPromptResult {
@@ -39,7 +39,7 @@ export class LoginScreen {
 
     const email = await input({
       message: 'Atlassian email:',
-      default: initialEmail || ALLOWED_BITBUCKET_EMAIL,
+      default: initialEmail,
       validate: (val) => {
         if (!val || !val.includes('@')) return 'Please enter a valid email address.';
         const check = AccountPolicy.validateEmail(val);

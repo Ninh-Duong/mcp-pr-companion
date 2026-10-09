@@ -25,7 +25,7 @@ async function runSessionStoreTests() {
   SessionStore.clearSession();
 
   const mockSession: RuntimeSession = {
-    email: 'ninh.duong@siliconstack.com.au',
+    email: 'a.user@example.com',
     token: 'test_token_12345',
     currentUserUuid: '{12345678-1234-1234-1234-1234567890ab}',
     displayName: 'Ninh Duong',

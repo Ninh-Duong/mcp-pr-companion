@@ -16,7 +16,7 @@ async function runOrchestrationTests() {
   // Test 2: Token persistence verification
   console.log('\n2. SessionStore token persistence verification:');
   const mockSession: RuntimeSession = {
-    email: 'ninh.duong@siliconstack.com.au',
+    email: 'a.user@example.com',
     token: 'test-token-secret-123',
     currentUserUuid: '{test-uuid-001}',
     displayName: 'Ninh Duong',

@@ -4,7 +4,7 @@ export class SecretScanner {
   private static patterns: Array<{ category: string; regex: RegExp; replacement: string }> = [
     {
       category: 'private_key',
-      regex: /-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----[\s\S]*?-----END (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----/gi,
+      regex: /-----BEGIN (RSA |EC |DSA |OPENSSH |ENCRYPTED |PGP )?PRIVATE KEY( BLOCK)?-----[\s\S]*?-----END (RSA |EC |DSA |OPENSSH |ENCRYPTED |PGP )?PRIVATE KEY( BLOCK)?-----/gi,
       replacement: '[REDACTED:PRIVATE_KEY]'
     },
     {
@@ -16,6 +16,16 @@ export class SecretScanner {
       category: 'basic_auth',
       regex: /Authorization:\s*Basic\s+[A-Za-z0-9+\/]+=*/gi,
       replacement: '[REDACTED:BASIC_AUTH]'
+    },
+    {
+      category: 'atlassian_token',
+      regex: /\b(?:ATBB|ATATT)[A-Za-z0-9_=-]{10,}/g,
+      replacement: '[REDACTED:ATLASSIAN_TOKEN]'
+    },
+    {
+      category: 'provider_token',
+      regex: /\b(?:gh[pousr]_[A-Za-z0-9]{36,}|xox[abpr]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}|sk_live_[0-9A-Za-z]{16,})\b/g,
+      replacement: '[REDACTED:PROVIDER_TOKEN]'
     },
     {
       category: 'aws_key',
@@ -34,12 +44,12 @@ export class SecretScanner {
     },
     {
       category: 'api_token',
-      regex: /(?:api[_-]?token|app[_-]?password|access[_-]?token|auth[_-]?token|secret[_-]?key)\s*[:=]\s*["']?([A-Za-z0-9\-_.~]{16,})["']?/gi,
+      regex: /(?:api[_-]?token|app[_-]?password|access[_-]?token|auth[_-]?token|secret[_-]?key|client[_-]?secret)\s*[:=]\s*["']?([A-Za-z0-9\-_.~]{16,})["']?/gi,
       replacement: '[REDACTED:API_TOKEN]'
     },
     {
       category: 'password_assignment',
-      regex: /(?:password|pwd|pass)\s*[:=]\s*["']?([^"'\s;\n,]{4,})["']?/gi,
+      regex: /\b(?:password|passwd|pwd|pass)\s*[:=]\s*["']?([^"'\s;\n,]{4,})["']?/gi,
       replacement: '[REDACTED:PASSWORD]'
     },
     {

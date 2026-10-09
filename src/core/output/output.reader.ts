@@ -148,12 +148,20 @@ export class OutputReader {
     return null;
   }
 
+  /**
+   * Normalizes `12` / `"12"` / `"file_0012"` to `file_0012`. Rejects anything else so
+   * caller-supplied ids (MCP tool input) can never escape the PR output directory.
+   */
+  static normalizeFileId(fileId: string | number): string {
+    const raw = String(fileId).trim();
+    if (/^\d+$/.test(raw)) return `file_${String(parseInt(raw, 10)).padStart(4, '0')}`;
+    if (/^file_\d+$/.test(raw)) return raw;
+    throw new Error(`Invalid file_id "${raw}". Expected e.g. "file_0001".`);
+  }
+
   static getFileContext(workspace: string, repoSlug: string, prId: number, fileId: string | number): string | null {
     const prDir = this.getPROutputDir(workspace, repoSlug, prId);
-    let normalizedId = String(fileId);
-    if (typeof fileId === 'number' || /^\d+$/.test(normalizedId)) {
-      normalizedId = `file_${String(fileId).padStart(4, '0')}`;
-    }
+    const normalizedId = this.normalizeFileId(fileId);
 
     const filePath = path.join(prDir, 'files', `${normalizedId}.md`);
     if (fs.existsSync(filePath)) {
@@ -187,10 +195,7 @@ export class OutputReader {
     const revDir = this.resolveRevisionDir(workspace, repoSlug, prId, revisionId);
     if (!revDir) return null;
 
-    let normalizedId = String(fileId);
-    if (typeof fileId === 'number' || /^\d+$/.test(normalizedId)) {
-      normalizedId = `file_${String(fileId).padStart(4, '0')}`;
-    }
+    const normalizedId = this.normalizeFileId(fileId);
 
     const changePath = path.join(revDir, 'files', normalizedId, 'change.json');
     const diffPath = path.join(revDir, 'files', normalizedId, 'patch.diff');

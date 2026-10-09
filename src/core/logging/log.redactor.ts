@@ -5,7 +5,7 @@ export class LogRedactor {
   private static uuidRegex = /\{?[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\}?/g;
   private static bearerRegex = /Bearer\s+[A-Za-z0-9\-\._~\+\/]+=*/gi;
   private static basicAuthRegex = /Basic\s+[A-Za-z0-9\+\/]+=*/gi;
-  private static bitbucketTokenRegex = /ATBB[a-zA-Z0-9_\-]+/g;
+  private static bitbucketTokenRegex = /(?:ATBB|ATATT)[a-zA-Z0-9_\-=]+/g;
 
   static redactString(text: string, workspace?: string, repoSlug?: string): string {
     if (!text) return text;

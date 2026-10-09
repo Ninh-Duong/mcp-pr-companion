@@ -9,6 +9,7 @@ export const BaseConfigSchema = z.object({
   ticket_prefix: z.array(z.string()).default(['WCE-', 'PROJ-', 'JIRA-']),
   default_target_branch: z.string().default('main'),
   default_pr_url: z.string().default(''),
+  allowed_emails: z.array(z.string()).default([]),
   privacy: PrivacyConfigSchema,
   sync: z.object({
     concurrency: z.number().default(2),
@@ -18,7 +19,6 @@ export const BaseConfigSchema = z.object({
   cache: z.object({
     memory_entries: z.number().default(20),
     ttl_seconds: z.number().default(300),
-    persist_raw_diff: z.boolean().default(true),
     max_revisions_per_pr: z.number().default(3),
     retention_days: z.number().default(30)
   }).default({}),
