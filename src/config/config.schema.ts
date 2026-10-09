@@ -19,7 +19,6 @@ export const BaseConfigSchema = z.object({
   cache: z.object({
     memory_entries: z.number().default(20),
     ttl_seconds: z.number().default(300),
-    persist_raw_diff: z.boolean().default(true),
     max_revisions_per_pr: z.number().default(3),
     retention_days: z.number().default(30)
   }).default({}),

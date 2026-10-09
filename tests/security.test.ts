@@ -8,6 +8,9 @@ import { DataStore } from '../src/core/storage/data.store.js';
 import { RedactionTracker } from '../src/core/privacy/redaction.report.js';
 import { Redactor } from '../src/utils/redactor.js';
 import { LogRedactor } from '../src/core/logging/log.redactor.js';
+import { OutputReader } from '../src/core/output/output.reader.js';
+import { DiffParser } from '../src/core/analyzer/diff.parser.js';
+import { PaginationHelper } from '../src/core/bitbucket/pagination.js';
 
 let passed = 0;
 let failed = 0;
@@ -95,6 +98,43 @@ async function runSecurityTests() {
   assert(!SecretScanner.scanAndRedact(`token used: ${atatt}`).includes('ATATT3x'), 'SecretScanner redacts ATATT API tokens');
   assert(!Redactor.redact(`err ${atatt}`).includes('abcdefghijklmnop'), 'Redactor masks ATATT API tokens');
   assert(!LogRedactor.redactString(`err ${atatt}`).includes('ATATT3x'), 'LogRedactor redacts ATATT API tokens');
+
+  console.log('\n7. file_id Path Traversal Guard:');
+  assert(OutputReader.normalizeFileId(12) === 'file_0012', 'Numeric file_id normalizes to file_0012');
+  assert(OutputReader.normalizeFileId('file_0003') === 'file_0003', 'Canonical file_id passes through');
+  let traversalRejected = false;
+  try { OutputReader.normalizeFileId('../../../etc/passwd'); } catch { traversalRejected = true; }
+  assert(traversalRejected, 'Traversal file_id is rejected');
+
+  console.log('\n8. Diff Parser Header Lines Inside Hunks:');
+  const trickyDiff = [
+    'diff --git a/q.sql b/q.sql',
+    '--- a/q.sql',
+    '+++ b/q.sql',
+    '@@ -1,2 +1,2 @@',
+    '--- old sql comment',
+    '+++ new sql comment',
+    ' SELECT 1;'
+  ].join('\n');
+  const tf = DiffParser.parse(trickyDiff).files[0];
+  assert(tf.oldPath === 'q.sql' && tf.newPath === 'q.sql', 'In-hunk "---"/"+++" lines do not overwrite file paths');
+  assert(tf.additions === 1 && tf.deletions === 1, 'In-hunk "---"/"+++" lines count as deletion/addition');
+
+  console.log('\n9. Pagination Refuses Cross-Origin next:');
+  const realFetch = globalThis.fetch;
+  const fetchedUrls: string[] = [];
+  globalThis.fetch = (async (url: any) => {
+    fetchedUrls.push(String(url));
+    return new Response(JSON.stringify({ values: [1], next: 'https://evil.example.com/steal' }), { status: 200 });
+  }) as typeof fetch;
+  const page = await PaginationHelper.fetchAllPages<number>('https://api.bitbucket.org/2.0/x', { Authorization: 'Bearer t' });
+  globalThis.fetch = realFetch;
+  assert(fetchedUrls.length === 1 && !page.isComplete, 'Pagination stops instead of following a foreign host');
+
+  console.log('\n10. Extra Secret Patterns:');
+  const extra = SecretScanner.scanAndRedact('gh=ghp_abcdefghijklmnopqrstuvwxyz0123456789AB bypass=keepme');
+  assert(!extra.includes('ghp_abc'), 'SecretScanner redacts GitHub tokens');
+  assert(extra.includes('bypass=keepme'), 'password pattern no longer matches inside "bypass"');
 
   console.log('\n================================================================');
   console.log(`Security Test Results: ${passed} Passed | ${failed} Failed`);
