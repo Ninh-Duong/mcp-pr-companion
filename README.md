@@ -27,6 +27,16 @@
 
 ## 🛠️ 2. Available Commands
 
+Setup (Node.js ≥ 18 and Git required):
+
+```bash
+npm ci
+npm run build
+```
+
+Optional: restrict which Atlassian accounts may log in via `"allowed_emails": ["you@company.com"]` in `.mcp-pr-companion/config/base.json` (empty = any account).
+
+
 | Command | Description |
 |---|---|
 | `npm run cmd` | Launches the interactive **Terminal UI (TUI)** to configure API tokens, manage PR link registry, warm local cache, and inspect sync logs. |
@@ -34,12 +44,9 @@
 | `npm run mcp-pr-companion` | Runs the **One-Command Auto Runner**: Authenticates session, discovers all OPEN pull requests for the active user, and syncs/generates context packs automatically. |
 | `npm run mcp-pr-companion:prod` | Runs the One-Command Auto Runner using compiled JavaScript assets in `dist/`. |
 | `npm start` | Starts the **Local MCP Server** in production mode over stdio transport for AI Agent connections. |
-| `npm run dev` | Starts the MCP Server in development mode with `tsx` hot reloading. |
+| `npm run dev` | Starts the MCP Server from TypeScript sources via `tsx` (no build step). |
 | `npm run build` | Compiles TypeScript source files (`src/`) into JavaScript (`dist/`). |
-| `npm test` | Runs the complete **Automated Test Suite** (Unit tests, Schema Contract validation, Referential Integrity, Aggregate validation, 9 Golden Scenarios, Atomic Write Rollback, and Orchestration tests). |
-| `npm run setup` | Initializes local environment, directory structures, and default configuration templates. |
-| `npm run check-deps` | Verifies required Node.js package dependencies. |
-| `npm run install-deps` | Automatically installs missing Node.js dependencies. |
+| `npm test` | Runs every test file in `tests/` (unit, schema contract, integrity, aggregate, golden scenarios, atomic write, orchestration, security, ownership filter, session store, benchmark). |
 | `npm run healthcheck` | Performs pre-flight environment checks (Node.js version, Git CLI availability). |
 
 ---
