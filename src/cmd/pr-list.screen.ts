@@ -3,6 +3,8 @@ import { PRDiscoveryService } from '../core/discovery/pr-discovery.service.js';
 import { DiscoveryCache } from '../core/discovery/discovery-cache.js';
 import { runtimeSession } from '../core/auth/runtime-session.js';
 import { PRDetailScreen } from './pr-detail.screen.js';
+import { GenerationManager } from '../core/generation/generation.manager.js';
+import { GenerationProgressRenderer } from './generation-progress.renderer.js';
 import { PRReadinessFilter, PRViewFilter } from '../core/discovery/pr-view-filter.js';
 
 export class PRListScreen {
@@ -169,8 +171,20 @@ export class PRListScreen {
 
         const selectedPrId = parseInt(selectedVal, 10);
         const selectedPr = visiblePRs.find(p => p.id === selectedPrId);
-        if (selectedPr) {
-          await PRDetailScreen.render(selectedPr);
+        if (selectedPr && (await PRDetailScreen.render(selectedPr)) === 'sync') {
+          const result = await GenerationManager.executeBatch(
+            email,
+            session.token,
+            workspace,
+            repoSlug,
+            [selectedPr],
+            1,
+            true,
+            'overwrite',
+            (progress) => GenerationProgressRenderer.render(progress)
+          );
+          console.log(`\nSync ${result.failed > 0 ? 'failed' : 'complete'} for PR #${selectedPr.id}. Log: ${result.logFilePath}\n`);
+          await select({ message: 'Press Enter to return to PR list:', choices: [{ name: 'Back to PR list', value: 'ok' }] });
         }
       }
     }
