@@ -1,19 +1,26 @@
 import { BitbucketClient, BitbucketFetchOptions } from './bitbucket.client.js';
 import { RawPRRevision } from './bitbucket.types.js';
-import { ConfigManager } from '../../config/config.manager.js';
+import { SessionStore } from '../auth/session.store.js';
 import { Logger } from '../../utils/logger.js';
 import { Redactor } from '../../utils/redactor.js';
 
 export class BitbucketCollector {
   private client: BitbucketClient;
 
+  /**
+   * Without explicit credentials (MCP server path), use the session saved by
+   * `npm run cmd` login, then BITBUCKET_EMAIL / BITBUCKET_READ_TOKEN env vars.
+   */
   constructor(email?: string, token?: string) {
     if (!email || !token) {
-      const resolved = ConfigManager.resolve('read');
-      this.client = new BitbucketClient(email || resolved.email, token || resolved.token);
-    } else {
-      this.client = new BitbucketClient(email, token);
+      const session = SessionStore.loadValidSession()?.session;
+      email = email || session?.email || process.env.BITBUCKET_EMAIL;
+      token = token || session?.token || process.env.BITBUCKET_READ_TOKEN;
     }
+    if (!token) {
+      throw new Error('No Bitbucket credentials: run `npm run cmd` to log in, or set BITBUCKET_EMAIL and BITBUCKET_READ_TOKEN.');
+    }
+    this.client = new BitbucketClient(email, token);
   }
 
   async collect(workspace: string, repoSlug: string, prId: number, options: BitbucketFetchOptions = {}): Promise<RawPRRevision> {

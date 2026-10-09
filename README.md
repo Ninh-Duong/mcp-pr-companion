@@ -15,7 +15,7 @@
   - Manages active revision pointers via `current.json` (`context_path`, `files_summary_path`, `actions_path`, `manifest_path`, `ai_reading_mode`).
 * **MCP Server & Dual-Interface Architecture**:
   - **Local MCP Server over stdio**: Exposes MCP tools (`get_pr_context_pack`, `get_pr_file_context`, `search_pr_files`, `get_pr_manifest`, `get_pr_sync_status`, `refresh_pr_data`) for direct integration with AI IDEs and Agents.
-  - **Terminal UI (`npm run cmd`)**: Interactive TUI for token configuration, PR link registry management, cache warming, and log inspection.
+  - **Terminal UI (`npm run cmd`)**: Log in with an Atlassian API token, view your open pull requests, and generate context packs.
   - **One-Command Auto Sync (`npm run mcp-pr-companion`)**: Automated sequential discovery, filtering, and context pack generation for all OPEN pull requests owned by the user.
 * **AST Analyzer & Secret Redacting Security**:
   - Classifies change kinds (`comment_only`, `functional_logic`, `public_api`, `database_schema`, `auth_security`, `configuration`, etc.).
@@ -34,12 +34,14 @@ npm ci
 npm run build
 ```
 
-Optional: restrict which Atlassian accounts may log in via `"allowed_emails": ["you@company.com"]` in `.mcp-pr-companion/config/base.json` (empty = any account).
+Configuration lives in `.mcp-pr-companion/config/base.json` (see `config.templates/base.example.json`); every field is optional. Use `"allowed_emails": ["you@company.com"]` to restrict which Atlassian accounts may log in (empty = any account).
+
+The MCP server fetches from Bitbucket using the session saved by `npm run cmd` (valid 30 minutes), or the `BITBUCKET_EMAIL` / `BITBUCKET_READ_TOKEN` environment variables.
 
 
 | Command | Description |
 |---|---|
-| `npm run cmd` | Launches the interactive **Terminal UI (TUI)** to configure API tokens, manage PR link registry, warm local cache, and inspect sync logs. |
+| `npm run cmd` | Launches the interactive **Terminal UI (TUI)**: log in, view open PRs, generate context packs, log out. |
 | `npm run cmd:prod` | Launches the Terminal UI using compiled JavaScript assets in `dist/`. |
 | `npm run mcp-pr-companion` | Runs the **One-Command Auto Runner**: Authenticates session, discovers all OPEN pull requests for the active user, and syncs/generates context packs automatically. |
 | `npm run mcp-pr-companion:prod` | Runs the One-Command Auto Runner using compiled JavaScript assets in `dist/`. |
