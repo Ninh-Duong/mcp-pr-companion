@@ -117,14 +117,7 @@ export class LoginScreen {
         credentials.email,
         credentials.repository,
         credentials.token,
-        (stageName, success, message) => {
-          AuthProgressRenderer.renderStage({
-            stageIndex: 0,
-            stageName,
-            success,
-            message
-          });
-        }
+        (stage) => AuthProgressRenderer.renderStage(stage)
       );
 
       if (authResult.success && authResult.session) {

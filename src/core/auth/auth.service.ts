@@ -1,6 +1,6 @@
 import { ConfigManager } from '../../config/config.manager.js';
 import { OpaqueIDGenerator } from '../storage/opaque.id.js';
-import { CapabilityProbe } from './capability.probe.js';
+import { CapabilityProbe, ProbeStageResult } from './capability.probe.js';
 import { FileLogger } from '../logging/file.logger.js';
 import { runtimeSession, RuntimeSession } from './runtime-session.js';
 import { AccountPolicy } from './account-policy.js';
@@ -63,7 +63,7 @@ export class AuthService {
     email: string,
     repositoryInput: string,
     token: string,
-    onProgress?: (stageName: string, success: boolean, message: string) => void
+    onProgress?: (stage: ProbeStageResult) => void
   ): Promise<{
     success: boolean;
     session?: RuntimeSession;
@@ -122,7 +122,7 @@ export class AuthService {
           message: stage.message
         });
         if (onProgress) {
-          onProgress(stage.stageName, stage.success, stage.message);
+          onProgress(stage);
         }
       }
     );
