@@ -59,6 +59,12 @@ export const PRManifestV4Schema = z.object({
     optional_next_files: z.array(z.string()),
     skip_categories: z.array(z.string()),
     token_budget: z.enum(['small', 'medium', 'large', 'extensive'])
+  }).optional(),
+  // Set when a previous revision of the same PR existed: what a re-reviewer needs to open.
+  changes_since_previous: z.object({
+    previous_revision: z.string(),
+    changed_file_ids: z.array(z.string()),
+    removed_paths: z.array(z.string())
   }).optional()
 });
 

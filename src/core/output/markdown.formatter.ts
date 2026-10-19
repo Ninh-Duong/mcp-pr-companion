@@ -25,6 +25,16 @@ export class MarkdownFormatter {
     if (aiReading.optional_next_files.length > 0) lines.push(`Optional: ${ids(aiReading.optional_next_files)}`);
     if (aiReading.skip_categories.length > 0) lines.push(`Skip: ${aiReading.skip_categories.join(', ')}`);
     lines.push('');
+
+    const since = manifest.changes_since_previous;
+    if (since) {
+      lines.push(`## Changed since last sync (${since.previous_revision})`);
+      lines.push(since.changed_file_ids.length > 0
+        ? `Files: ${since.changed_file_ids.join(', ')}`
+        : 'Files: none (only commits or metadata moved)');
+      if (since.removed_paths.length > 0) lines.push(`No longer in the PR: ${since.removed_paths.join(', ')}`);
+      lines.push('');
+    }
     lines.push('## Overview');
     lines.push(`- **Repository**: ${repository}`);
     lines.push(`- **Branches**: \`${manifest.source_branch}\` -> \`${manifest.target_branch}\``);

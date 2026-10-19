@@ -27,15 +27,24 @@ export class BitbucketCollector {
     this.client = new BitbucketClient(email, token);
   }
 
-  /** Throws unless the configured token authenticates (GET /user, read:user scope). Returns nothing personal. */
-  async checkConnection(): Promise<void> {
+  /** Throws unless the configured token authenticates (GET /user, read:user scope). The account is for internal use; tools never return it. */
+  async checkConnection(): Promise<{ uuid: string }> {
     try {
-      await this.client.getCurrentUser();
+      return await this.client.getCurrentUser();
     } catch (err: any) {
       if (err.status === 401) throw new Error('Bitbucket rejected the credentials (HTTP 401): check BITBUCKET_EMAIL / BITBUCKET_API_TOKEN in .env.');
       if (err.status === 403) throw new Error('Bitbucket token lacks the read:user scope (HTTP 403).');
       throw new Error(`Bitbucket is unreachable: ${SecretScanner.scanAndRedact(err.message || String(err))}`);
     }
+  }
+
+  /** UUID of the account behind the configured token (for "my PRs" discovery). */
+  async currentUserUuid(): Promise<string> {
+    return (await this.checkConnection()).uuid;
+  }
+
+  getComments(workspace: string, repoSlug: string, prId: number) {
+    return this.client.getPRComments(workspace, repoSlug, prId);
   }
 
   /** One metadata request: the PR's current source and target commit hashes (used to detect stale revisions). */
