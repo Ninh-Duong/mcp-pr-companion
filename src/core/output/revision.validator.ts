@@ -4,6 +4,7 @@ import { PRManifestV4Schema, PRManifestV4 } from './schema/manifest.v4.schema.js
 import { FileIndexEntryV4Schema, FileIndexEntryV4 } from './schema/file_index.v4.schema.js';
 import { FileChangeV4Schema } from './schema/file_change.v4.schema.js';
 import { PRCoverageV4Schema } from './schema/coverage.v4.schema.js';
+import { readSecure } from '../storage/secure-file.js';
 
 export interface ValidationResult {
   valid: boolean;
@@ -36,7 +37,7 @@ export class RevisionValidator {
     // 2. Validate manifest.json Schema
     let manifest: PRManifestV4 | null = null;
     try {
-      const manifestRaw = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+      const manifestRaw = JSON.parse(readSecure(manifestPath));
       manifest = PRManifestV4Schema.parse(manifestRaw);
     } catch (err: any) {
       errors.push(`manifest.json schema validation failed: ${err.message || String(err)}`);
@@ -44,7 +45,7 @@ export class RevisionValidator {
 
     // 3. Validate coverage.json Schema
     try {
-      const coverageRaw = JSON.parse(fs.readFileSync(coveragePath, 'utf-8'));
+      const coverageRaw = JSON.parse(readSecure(coveragePath));
       PRCoverageV4Schema.parse(coverageRaw);
     } catch (err: any) {
       errors.push(`coverage.json schema validation failed: ${err.message || String(err)}`);
@@ -55,7 +56,7 @@ export class RevisionValidator {
     const indexFileIds = new Set<string>();
 
     try {
-      const indexLines = fs.readFileSync(indexPath, 'utf-8').split('\n').filter(Boolean);
+      const indexLines = readSecure(indexPath).split('\n').filter(Boolean);
       indexLines.forEach((line, idx) => {
         try {
           const entryRaw = JSON.parse(line);
@@ -76,7 +77,7 @@ export class RevisionValidator {
           } else {
             // Validate change.json schema
             try {
-              const changeRaw = JSON.parse(fs.readFileSync(resolvedDetailPath, 'utf-8'));
+              const changeRaw = JSON.parse(readSecure(resolvedDetailPath));
               const fileChange = FileChangeV4Schema.parse(changeRaw);
 
               // Check patch_ref

@@ -2,6 +2,7 @@ import { select } from '@inquirer/prompts';
 import { DiscoveredPR } from '../core/discovery/pr-list.normalizer.js';
 import { runtimeSession } from '../core/auth/runtime-session.js';
 import { BitbucketClient } from '../core/bitbucket/bitbucket.client.js';
+import { AccessGate } from '../core/auth/access-gate.js';
 import { DataStore } from '../core/storage/data.store.js';
 
 export class PRDetailScreen {
@@ -20,7 +21,8 @@ export class PRDetailScreen {
     const { workspace, repoSlug } = session.repository;
 
     // Check active local revision first
-    const active = DataStore.getActiveRevision(workspace, repoSlug, prId);
+    // Local stats need the encrypted cache unlocked; without access fall back to the API below.
+    const active = await AccessGate.unlock(workspace, repoSlug).then(() => DataStore.getActiveRevision(workspace, repoSlug, prId), () => null);
     if (active && active.manifest) {
       return {
         commits: active.manifest.stats.commits_count,

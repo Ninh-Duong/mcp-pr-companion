@@ -43,6 +43,17 @@ export class BitbucketCollector {
     return (await this.checkConnection()).uuid;
   }
 
+  /** The repository UUID (ai-context key material). Errors are phrased as "No access" and never include the UUID. */
+  async getRepositoryUuid(workspace: string, repoSlug: string): Promise<string> {
+    try {
+      return String((await this.client.getRepository(workspace, repoSlug)).uuid || '');
+    } catch (err: any) {
+      if (err.status === 401) throw new Error('No access: Bitbucket rejected the credentials (HTTP 401): check BITBUCKET_EMAIL / BITBUCKET_API_TOKEN in .env.');
+      if (err.status === 403 || err.status === 404) throw new Error(`No access: this account cannot read ${workspace}/${repoSlug} (HTTP ${err.status}).`);
+      throw new Error(`No access: cannot connect to Bitbucket (${SecretScanner.scanAndRedact(err.message || String(err))}).`);
+    }
+  }
+
   getComments(workspace: string, repoSlug: string, prId: number) {
     return this.client.getPRComments(workspace, repoSlug, prId);
   }

@@ -1,3 +1,4 @@
+import { AccessGate } from '../src/core/auth/access-gate.js';
 import { DataStore } from '../src/core/storage/data.store.js';
 import { RawPRRevision } from '../src/core/bitbucket/bitbucket.types.js';
 
@@ -43,6 +44,7 @@ async function runBenchmarkTests() {
   };
 
   // 2. Persist Schema v4.0 Manifest & Check Size
+  AccessGate.setMaterial('acme', 'demo.api', '{00000000-0000-0000-0000-000000000004}');
   const result = DataStore.saveRevision('acme', 'demo.api', 4565, sampleRawRev);
   const manifestJsonStr = JSON.stringify(result.manifest);
   const manifestSizeBytes = Buffer.byteLength(manifestJsonStr, 'utf-8');

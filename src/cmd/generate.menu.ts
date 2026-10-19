@@ -131,12 +131,7 @@ export class GenerateMenu {
 
       // Step 2: Check for existing local data conflicts
       const existingPRs = prsToGenerate.filter((pr) => {
-        const active = DataStore.getActiveRevision(
-          session.repository.workspace,
-          session.repository.repoSlug,
-          pr.id
-        );
-        return active !== null;
+        return DataStore.hasRevision(session.repository.workspace, session.repository.repoSlug, pr.id);
       });
 
       if (existingPRs.length > 0) {
@@ -156,11 +151,7 @@ export class GenerateMenu {
 
         if (strategyChoice === 'skip') {
           prsToGenerate = prsToGenerate.filter((pr) => {
-            return !DataStore.getActiveRevision(
-              session.repository.workspace,
-              session.repository.repoSlug,
-              pr.id
-            );
+            return !DataStore.hasRevision(session.repository.workspace, session.repository.repoSlug, pr.id);
           });
 
           if (prsToGenerate.length === 0) {

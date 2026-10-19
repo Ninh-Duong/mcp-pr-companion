@@ -20,6 +20,7 @@ export class ConfigManager {
     this.cached = BaseConfigSchema.parse({
       ticket_prefix: env.TICKET_PREFIXES,
       allowed_emails: env.ALLOWED_EMAILS,
+      auto_sync_on_start: env.AUTO_SYNC_ON_START,
       privacy: {
         mode: env.PRIVACY_MODE,
         remove_author: env.PRIVACY_REMOVE_AUTHOR,

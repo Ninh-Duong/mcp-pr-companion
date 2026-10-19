@@ -1,6 +1,12 @@
 import fs from 'fs';
 import path from 'path';
 import { RevisionValidator } from '../src/core/output/revision.validator.js';
+import { writeSecure } from '../src/core/storage/secure-file.js';
+import { AccessGate } from '../src/core/auth/access-gate.js';
+
+// Fixtures are written encrypted, exactly as RevisionWriter does.
+AccessGate.setMaterial('test-ws', 'test-repo', '{00000000-0000-0000-0000-000000000001}');
+const writeTestFile = (file: string, data: string, _encoding?: string) => writeSecure(file, data, { workspace: 'test-ws', repoSlug: 'test-repo', prId: 1 });
 
 function runAggregateTests() {
   console.log('🧪 [AGGREGATE TEST] Running Aggregate Counter Validation Tests...');
@@ -77,19 +83,19 @@ function runAggregateTests() {
       }
     };
 
-    fs.writeFileSync(path.join(tmpTestDir, 'manifest.json'), JSON.stringify(MismatchedManifest), 'utf-8');
-    fs.writeFileSync(
+    writeTestFile(path.join(tmpTestDir, 'manifest.json'), JSON.stringify(MismatchedManifest), 'utf-8');
+    writeTestFile(
       path.join(tmpTestDir, 'files.index.jsonl'),
       `${JSON.stringify(fileIndex1)}\n${JSON.stringify(fileIndex2)}`,
       'utf-8'
     );
-    fs.writeFileSync(path.join(tmpTestDir, 'commits.jsonl'), 'commit msg', 'utf-8');
-    fs.writeFileSync(path.join(tmpTestDir, 'coverage.json'), JSON.stringify(coverage), 'utf-8');
+    writeTestFile(path.join(tmpTestDir, 'commits.jsonl'), 'commit msg', 'utf-8');
+    writeTestFile(path.join(tmpTestDir, 'coverage.json'), JSON.stringify(coverage), 'utf-8');
 
     const makeFileDir = (fileId: string) => {
       const dir = path.join(tmpTestDir, 'files', fileId);
       fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(
+      writeTestFile(
         path.join(dir, 'change.json'),
         JSON.stringify({
           schema_version: '4.0',
@@ -103,7 +109,7 @@ function runAggregateTests() {
         }),
         'utf-8'
       );
-      fs.writeFileSync(path.join(dir, 'patch.diff'), 'diff', 'utf-8');
+      writeTestFile(path.join(dir, 'patch.diff'), 'diff', 'utf-8');
     };
 
     makeFileDir('file_0001');

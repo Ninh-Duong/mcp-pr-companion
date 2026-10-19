@@ -2,6 +2,7 @@ import { select } from '@inquirer/prompts';
 import { runtimeSession } from '../core/auth/runtime-session.js';
 import { PRListScreen } from './pr-list.screen.js';
 import { GenerateMenu } from './generate.menu.js';
+import { ContextViewerScreen } from './context-viewer.screen.js';
 import { LoginScreen } from './login.screen.js';
 import { ConfigManager } from '../config/config.manager.js';
 
@@ -29,7 +30,8 @@ export class MainMenu {
 
       const choices = [
         { name: '1. View current pull requests', value: 'view_prs' },
-        { name: '2. Generate PR data', value: 'generate_data' }
+        { name: '2. Generate PR data', value: 'generate_data' },
+        { name: '3. View synced PR context (decrypted)', value: 'view_context' }
       ];
       if (ConfigManager.credentials().repositories.length > 1) {
         choices.push({ name: `${choices.length + 1}. Switch repository`, value: 'switch_repo' });
@@ -42,6 +44,8 @@ export class MainMenu {
         await PRListScreen.render();
       } else if (choice === 'generate_data') {
         await GenerateMenu.displayMenu();
+      } else if (choice === 'view_context') {
+        await ContextViewerScreen.render();
       } else if (choice === 'switch_repo') {
         // On failure the previous repository session stays active.
         if (!(await LoginScreen.executeLoginFlow())) {

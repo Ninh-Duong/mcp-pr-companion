@@ -1,3 +1,4 @@
+import { AccessGate } from '../src/core/auth/access-gate.js';
 import { SecretScanner } from '../src/core/privacy/secret.scanner.js';
 import path from 'path';
 import { PRRegistry } from '../src/core/registry/pr.registry.js';
@@ -93,6 +94,7 @@ index 1234567..89abcdef 100644
   console.log('\n6. RevisionWriter & OutputReader Schema v4 Storage:');
   const testWs = 'testws';
   const testRepo = 'testrepo';
+  AccessGate.setMaterial(testWs, testRepo, '{00000000-0000-0000-0000-000000000003}');
   const testPr = 9999;
   const srcCommit = '1111111111111111111111111111111111111111';
   const tgtCommit = '2222222222222222222222222222222222222222';

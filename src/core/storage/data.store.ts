@@ -1,3 +1,4 @@
+import fs from 'fs';
 import path from 'path';
 import { RawPRRevision } from '../bitbucket/bitbucket.types.js';
 import { ConfigManager } from '../../config/config.manager.js';
@@ -22,6 +23,11 @@ import { PRCoverageV4 } from '../output/schema/coverage.v4.schema.js';
 export class DataStore {
   static getActiveRevision(workspace: string, repoSlug: string, prId: number) {
     return OutputReader.getActiveRevision(workspace, repoSlug, prId);
+  }
+
+  /** Whether a PR has local data, without decrypting anything (no unlock needed). */
+  static hasRevision(workspace: string, repoSlug: string, prId: number): boolean {
+    return fs.existsSync(path.join(OutputReader.getPROutputDir(workspace, repoSlug, prId), 'current.json'));
   }
 
   /**

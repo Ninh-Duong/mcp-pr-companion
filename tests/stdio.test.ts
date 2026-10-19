@@ -1,5 +1,5 @@
 // Spawns the real server entry over stdio: initialize must return instructions, tools/list the
-// 8 tools, and every stdout line must be JSON-RPC (anything else would corrupt the hub's stream).
+// 9 tools, and every stdout line must be JSON-RPC (anything else would corrupt the hub's stream).
 import assert from 'node:assert/strict';
 import { spawn } from 'child_process';
 import path from 'path';
@@ -43,7 +43,7 @@ try {
 
   send({ id: 2, method: 'tools/list' });
   const names = (await waitFor(2)).result.tools.map((t: any) => t.name).sort();
-  assert.deepEqual(names, ['check_bitbucket_connection', 'get_pr_comments', 'get_pr_context_pack', 'get_pr_file_changes', 'get_pr_file_context', 'get_pr_sync_status', 'list_my_open_prs', 'search_pr_files']);
+  assert.deepEqual(names, ['check_bitbucket_connection', 'get_pr_comments', 'get_pr_context_pack', 'get_pr_file_changes', 'get_pr_file_context', 'get_pr_sync_status', 'list_my_open_prs', 'search_pr_files', 'sync_my_open_prs']);
 
   for (const line of lines) assert.equal(JSON.parse(line).jsonrpc, '2.0');
   console.log(`  ✓ stdio: initialize + tools/list OK, ${lines.length} stdout lines are all JSON-RPC`);
