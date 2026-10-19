@@ -67,9 +67,10 @@ Chạy lại `.\run.cmd check`. Thấy toàn dấu ✓ là xong:
 ## 2. Sử dụng hằng ngày
 
 ```powershell
-.\run.cmd cmd            # mở menu: xem PR, Sync 1 PR, Generate nhiều PR
-.\run.cmd generate-all   # tạo context cho tất cả PR đang mở của bạn, trong mọi repo khai báo
-.\run.cmd check          # kiểm tra môi trường (không thay đổi gì)
+.\run.cmd cmd              # mở menu: xem PR, Sync 1 PR, Generate nhiều PR, xem dữ liệu đã giải mã
+.\run.cmd generate-all     # tạo context cho tất cả PR đang mở của bạn, trong mọi repo khai báo
+.\run.cmd check            # kiểm tra môi trường (không thay đổi gì)
+.\run.cmd purge-plaintext  # xoá dữ liệu cũ chưa mã hoá trong ai-context/ (chạy 1 lần sau khi nâng cấp)
 ```
 
 Đã có Node.js ≥ 20.12 thì có thể dùng lệnh npm, kết quả giống hệt:
@@ -127,9 +128,16 @@ Các tool AI có thể gọi (qua mcp-hub tên sẽ có tiền tố `pr__`, vd `
 | `get_pr_sync_status` | Xem PR đã có dữ liệu ở máy chưa (không gọi Bitbucket) |
 | `get_pr_comments` | Đọc comment review của PR (cả comment inline, kèm `file_id`), đã che thông tin nhạy cảm; `include_resolved: false` để chỉ lấy thread chưa resolve |
 | `list_my_open_prs` | Liệt kê PR đang mở của bạn (theo `BITBUCKET_REPOSITORY` hoặc 1 repo) kèm sẵn `pr_url` |
+| `sync_my_open_prs` | Sync **toàn bộ PR đang mở của bạn** trong 1 repo (hoặc mọi repo trong `BITBUCKET_REPOSITORY`) rồi trả về danh sách PR: trạng thái, ticket, mức rủi ro. PR không có commit mới thì bỏ qua |
 | `check_bitbucket_connection` | Kiểm tra email/token trong `.env` có kết nối được Bitbucket không |
 
-Muốn dùng qua **mcp-hub** (một MCP gom nhiều MCP con): xem [docs/HUB_INTEGRATION.md](docs/HUB_INTEGRATION.md).
+Muốn dùng qua **mcp-hub** (một MCP gom nhiều MCP con): xem [docs/HUB_INTEGRATION.md](docs/HUB_INTEGRATION.md). Ví dụ sync cả repo qua hub:
+
+```text
+/mcp-hub:mcp-pr-companion siliconstack/wec.be sync toàn bộ PR về cho tôi
+```
+
+AI sẽ gọi `pr__sync_my_open_prs` rồi hiện bảng PR (PR, title, trạng thái, ticket, rủi ro). Muốn tự sync mỗi lần MCP khởi động thì đặt `AUTO_SYNC_ON_START=true` trong `.env`.
 
 ---
 
@@ -144,6 +152,7 @@ Mọi cấu hình nằm trong file `.env`. Danh sách đầy đủ có trong `.e
 | `BITBUCKET_REPOSITORY` | ✅ (với `cmd`, `generate-all`) | Danh sách repo, cách nhau bằng dấu phẩy: `wec.be,wec.database` hoặc `workspace/repo`. `generate-all` chạy **tất cả** repo; `cmd` cho chọn repo (và đổi repo trong menu). MCP server không cần vì lấy repo từ link PR |
 | `BITBUCKET_WORKSPACE` | | Workspace mặc định cho các repo không ghi workspace, vd `siliconstack` |
 | `ALLOWED_EMAILS` | | Chỉ cho phép các email này chạy tool (phân cách bằng dấu phẩy). Để trống = ai cũng chạy được |
+| `AUTO_SYNC_ON_START` | | `true` = khi MCP server khởi động thì tự sync (chạy nền) mọi PR đang mở của bạn trong `BITBUCKET_REPOSITORY`. Mặc định `false` |
 | `TICKET_PREFIXES` | | Tiền tố mã ticket ưu tiên, mặc định `WCE-,PROJ-,JIRA-`. Ngoài ra tool tự nhận mã dạng `KEY-123` trong tên branch hoặc `[KEY-123]` trong title |
 | `PRIVACY_*` | | Mức ẩn thông tin trong kết quả (mặc định đã an toàn) |
 | `AI_CONTEXT_ROOT` | | Thư mục lưu kết quả, mặc định `ai-context` |
@@ -155,6 +164,15 @@ Mọi cấu hình nằm trong file `.env`. Danh sách đầy đủ có trong `.e
 - Token chỉ nằm trong `.env` và bộ nhớ khi chạy. Công cụ không lưu token ra file nào khác, cũng không hỏi nhập token.
 - Chỉ file mẫu `.env.example` (để trống) được commit.
 - Token và mật khẩu lỡ nằm trong diff, cùng email trong tiêu đề, mô tả và commit message, được tự động che trước khi ghi ra kết quả.
+
+### 🔐 Dữ liệu trong `ai-context/` được mã hoá
+
+- **Mọi file** trong `ai-context/` đều được mã hoá (AES-256-GCM). Mở thư mục ra chỉ thấy một dòng header và dữ liệu nhị phân, không đọc được nội dung PR.
+- Chỉ đọc được qua **MCP tool** hoặc **CLI** (`.\run.cmd cmd` → đăng nhập → **View synced PR context (decrypted)**), và chỉ sau khi kiểm tra kết nối Bitbucket thành công bằng `.env`: đúng email/token, qua `ALLOWED_EMAILS`, và account có quyền đọc repo đó. Không kết nối được thì không giải mã được, kể cả khi offline.
+- Khoá lấy từ UUID của repo mà Bitbucket chỉ trả cho người có quyền đọc repo. Khoá chỉ nằm trong RAM, không lưu ra file.
+- Tên thư mục và file (workspace, repo, số PR, `file_0001`…) vẫn để dạng thường.
+- Dữ liệu tạo trước khi có mã hoá: chạy `.\run.cmd purge-plaintext` một lần để xoá, rồi sync lại.
+- Chi tiết kỹ thuật và giới hạn: [docs/ENCRYPTION.md](docs/ENCRYPTION.md).
 
 ---
 
@@ -186,6 +204,9 @@ Luôn chạy `.\run.cmd check` trước để xem thiếu gì.
 | `Fill in BITBUCKET_... in .env` | Điền biến còn thiếu vào `.env` |
 | `Email or API token invalid` | Sai email/token hoặc token hết hạn → tạo token mới, sửa `.env` |
 | `Repository read access` ✗ | Sai `BITBUCKET_REPOSITORY` hoặc token thiếu quyền `read:repository` |
+| `No access: this account cannot read <ws>/<repo>` | Account trong `.env` không có quyền đọc repo đó, nên dữ liệu đã mã hoá không mở được |
+| `No access: cannot connect to Bitbucket` | Mất mạng: dữ liệu mã hoá chỉ mở được khi kiểm tra Bitbucket thành công |
+| `Unencrypted ai-context file` | Dữ liệu cũ chưa mã hoá: chạy `purge-plaintext` hoặc sync lại PR |
 | `npm ci failed` | Máy không vào được npm registry → kiểm tra mạng/proxy |
 | `Node.js ... requires >=20.12` | Chạy bằng `.\run.cmd` / `./run.sh` để tự cài Node, hoặc cài từ https://nodejs.org |
 | `'run.cmd' is not recognized` | Trong PowerShell phải gõ `.\run.cmd` |
@@ -200,7 +221,7 @@ flowchart LR
     A[Link PR / Menu] --> B[Gọi Bitbucket API]
     B --> C[Phân tích diff: loại thay đổi, mức rủi ro]
     C --> D[Che thông tin nhạy cảm]
-    D --> E[Ghi context pack]
+    D --> E[Mã hoá + ghi context pack]
     E --> F[AI đọc qua MCP]
 ```
 
@@ -230,3 +251,4 @@ Tài liệu cho developer và AI agent (tiếng Anh):
 | [docs/STANDARDS.md](docs/STANDARDS.md) | Chuẩn code, contract của tool, contract bảo mật dữ liệu |
 | [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) | Vì sao dùng từng thư viện, thư viện nào cố ý không dùng |
 | [docs/HUB_INTEGRATION.md](docs/HUB_INTEGRATION.md) | Chạy như MCP con của mcp-hub |
+| [docs/ENCRYPTION.md](docs/ENCRYPTION.md) | Mã hoá ai-context: định dạng file, nguồn khoá, cổng kiểm tra quyền, giới hạn, cách chuyển dữ liệu cũ |

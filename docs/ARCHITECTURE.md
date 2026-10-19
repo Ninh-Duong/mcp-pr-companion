@@ -61,11 +61,14 @@ Other local state, all git-ignored: `Logs/mcp-server.log` (MCP and launcher log)
 
 ## 4. Write path and atomicity
 
+Every file below is written with `writeSecure` and read with `readSecure` (`src/core/storage/secure-file.ts`): AES-256-GCM with a key derived from the repository UUID, released only by `AccessGate.unlock()` after a live Bitbucket check. Names stay plaintext, content never does. Details: [ENCRYPTION.md](ENCRYPTION.md).
+
+
 1. Write the revision into `revisions/.tmp-<rev>-<ts>/`.
 2. `RevisionValidator.validateOrThrow`: zod schemas plus cross-checks such as index totals against the manifest. On failure the temp folder is deleted and the active revision is untouched.
 3. Rename it into `revisions/<rev>/`.
 4. Rebuild `files/` aside, then swap it in, so ids from an older, larger revision never linger.
-5. Write `context.md`, `files.md`, `actions.md` and the top-level `manifest.json` with `AtomicWriter` (temp file, fsync, rename).
+5. Write `context.md`, `files.md`, `actions.md` and the top-level `manifest.json` (each encrypted, temp file, fsync, rename).
 6. Write **`current.json` last**. It is the commit point.
 7. Prune: keep the active revision and the 4 newest others (`RevisionWriter.KEEP_REVISIONS = 5`).
 
@@ -104,3 +107,5 @@ sequenceDiagram
 - `bin/cli.js` is the only supported entry. It keeps `node_modules` and `dist/` in sync with the lockfile and `src/` (via stamps), loads `.env` (real env vars win), checks the required keys, and spawns the entry with `cwd` = project root.
 - Under mcp-hub the child's stderr is discarded. The launcher and `Logger` therefore also append to `Logs/mcp-server.log`.
 - The first start on a fresh clone runs `npm ci` and `tsc`, which can take a minute. Run `node bin/cli.js prepare` once before connecting a client.
+- With `AUTO_SYNC_ON_START=true`, the server starts `PRContextService.autoSync()` in the background right after the stdio connection is up. It runs the same code as `sync_my_open_prs` over every `BITBUCKET_REPOSITORY` entry, never blocks tool calls (overlapping PR syncs share one fetch), and logs `auto_sync done total=… synced=… unchanged=… failed=…`. mcp-hub starts children per client session, so this runs once per session.
+- Batch sync (`sync_my_open_prs`, auto-sync) runs 3 PRs at a time (`p-limit`). An unchanged PR costs one metadata request, and one failing PR is reported in its row without stopping the batch.

@@ -45,6 +45,7 @@ Copy the hub template `config/mcps/mcp-pr-companion.example.json`:
       { "server": "mcp-pr-companion", "name": "get_pr_sync_status", "exposeAs": "pr__get_pr_sync_status" },
       { "server": "mcp-pr-companion", "name": "get_pr_comments", "exposeAs": "pr__get_pr_comments" },
       { "server": "mcp-pr-companion", "name": "list_my_open_prs", "exposeAs": "pr__list_my_open_prs" },
+      { "server": "mcp-pr-companion", "name": "sync_my_open_prs", "exposeAs": "pr__sync_my_open_prs" },
       { "server": "mcp-pr-companion", "name": "check_bitbucket_connection", "exposeAs": "pr__check_bitbucket_connection" }
     ]
   }
@@ -62,12 +63,17 @@ Both entries start `enabled: false`. Set both to `true` once `.env` is filled an
 | Forwards tool schemas and annotations unchanged | zod `inputSchema` and annotations on every tool |
 | Prefixes tools with `pr__` | Child tool names have no prefix |
 | Serves the contract file as a prompt and passes on server instructions | `INSTRUCTIONS` stays short and generic |
-| Applies a per-call timeout | Only `get_pr_context_pack`, `get_pr_comments`, `list_my_open_prs` and `check_bitbucket_connection` do network I/O; file tools are local reads |
+| Applies a per-call timeout | Fetch-heavy tools are `get_pr_context_pack` and `sync_my_open_prs`; the others make at most one access-check request per repository per minute. `sync_my_open_prs` on a repository with many changed PRs can approach `timeoutSeconds`: call it per repository, or raise the timeout. |
+| Launches the child once per client session | `AUTO_SYNC_ON_START=true` (child `.env`, or `env` in the hub child config) syncs in the background at each launch |
 | Needs a read-only upstream health check for `scripts/smoke.py` (`docs/child-mcp-compatibility.md`) | `check_bitbucket_connection` returns `{"connected": true}` only when the token authenticates |
 
 Renaming a tool, changing its parameters or moving the log path requires updating the hub's `hub.json` allowlist (the user does this), `docs/mcps/mcp-pr-companion.md` and `scripts/smoke.py` in the same change.
 
-## 5. Troubleshooting
+## 5. Sync from the hub
+
+`/mcp-hub:mcp-pr-companion siliconstack/wec.be sync toàn bộ PR về cho tôi` makes the agent call `pr__sync_my_open_prs` with `repository: "siliconstack/wec.be"`, then show the returned `prs` as a table (PR, title, status, ticket, risk, files). No hub code is involved: the hub skill routes the task, and the contract `docs/mcps/mcp-pr-companion.md` tells the agent which tool to use.
+
+## 6. Troubleshooting
 
 | Symptom (hub `logs/mcp-hub.jsonl` / child `Logs/mcp-server.log`) | Fix |
 |---|---|
@@ -76,9 +82,11 @@ Renaming a tool, changing its parameters or moving the log path requires updatin
 | Tool result `Error: PR is not synced yet…` | Call `pr__get_pr_context_pack` first |
 | `Error: Access denied. BITBUCKET_EMAIL is not listed in ALLOWED_EMAILS` | Fix `ALLOWED_EMAILS` or the email in `.env` |
 | `Error: Failed to fetch PR metadata: HTTP 401` / `403` | Token expired or missing `read:pullrequest` / `read:repository` |
+| `Error: No access: this account cannot read <ws>/<repo>` | The account in `.env` lacks read access to that repository (the encrypted cache stays sealed) |
+| `Error: No access: cannot connect to Bitbucket` | Network down: the encrypted cache cannot be unlocked offline, by design |
 | Context pack starts with `Note: could not check Bitbucket…` | Network problem; cached data is shown. Retry, or pass `refresh: true` once the network is back. |
 
-## 6. Direct use without the hub
+## 7. Direct use without the hub
 
 ```json
 { "mcpServers": { "mcp-pr-companion": { "command": "node", "args": ["<path>/mcp-pr-companion/bin/cli.js", "server"] } } }

@@ -19,7 +19,8 @@ This repository is built almost entirely by AI agents. Any agent that edits it (
 | 7 | **The schema v4 on-disk format is frozen.** Do not rename `current.json`, `manifest.json`, `files.index.jsonl`, `commits.jsonl`, `coverage.json`, `files/<id>/change.json`, `patch.diff`, the `file_NNNN` id format or any schema field. Additive optional fields are fine; update the zod schema in `src/core/output/schema/` in the same change. | Existing `ai-context/` folders and other tools read them. | `tests/contract.test.ts` |
 | 8 | **No new dependency** without a row in [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) explaining why stdlib or an installed package cannot do it. | Supply chain and startup time. Every child of the hub runs `npm ci`. | review |
 | 9 | **Configuration lives only in env vars** (`.env`, loaded by `bin/cli.js` via `process.loadEnvFile`). Read env in `src/config/config.manager.ts` only. Add each new variable to `.env.example` and the README config table. Never read `.env` from code, never print values, never commit `.env`. | One place to look, and secrets stay out of git. | `.gitignore` |
-| 10 | **`ALLOWED_EMAILS` is enforced on every path.** The CLI checks it at login; the MCP path checks it in `BitbucketCollector`'s constructor. Do not construct a `BitbucketClient` from env credentials anywhere else. | Lets a team lock the tool to known accounts. | `tests/server.test.ts` §11 |
+| 10 | **`ALLOWED_EMAILS` is enforced on every path.** The CLI checks it at login; the MCP path checks it in `BitbucketCollector`'s constructor. Do not construct a `BitbucketClient` from env credentials anywhere else. | Lets a team lock the tool to known accounts. | `tests/server.test.ts` §12 |
+| 11 | **ai-context is encrypted at rest; only `secure-file.ts` touches its bytes.** Read and write every file under `ai-context/` through `readSecure` / `writeSecure` (`src/core/storage/secure-file.ts`), usually via `OutputReader` / `RevisionWriter`. Never `fs.readFileSync` / `writeFileSync` a file there, never decrypt elsewhere, and never put content in a file or folder name. An entry point must `await AccessGate.unlock(workspace, repo)` before reading or writing. The key material (repository UUID) stays in memory: never log it, return it or write it to disk. `PRC1` and the HKDF info string are frozen. See [docs/ENCRYPTION.md](docs/ENCRYPTION.md). | Users must not be able to read synced PR data without a successful Bitbucket check. | `tests/secure-file.test.ts`, `tests/server.test.ts` §9a |
 
 ## 2. Working rules
 
@@ -34,6 +35,7 @@ This repository is built almost entirely by AI agents. Any agent that edits it (
   | An env variable | `.env.example`, the README config table |
   | A dependency | `docs/DEPENDENCIES.md` |
   | The pipeline or the on-disk layout | `docs/ARCHITECTURE.md` |
+  | Encryption, the access gate or what stays plaintext | `docs/ENCRYPTION.md` (and invariant 11) |
   | The launch command or log path | `docs/HUB_INTEGRATION.md` and the hub contract |
 
 - **Keep changes surgical.** Do not reformat files you did not need to touch. Do not rename modules as a side quest.
@@ -49,27 +51,30 @@ This repository is built almost entirely by AI agents. Any agent that edits it (
 | `src/mcp/context.service.ts` | `PRContextService`: freshness check and sync (`ensureFresh`, `sync` with in-flight dedup), local reads, `page()`. |
 | `src/config/` | `config.manager.ts` (the only reader of env) · `config.schema.ts` (zod; turns env strings into typed values). |
 | `src/core/bitbucket/` | `bitbucket.client.ts` (every endpoint) · `http.ts` (`fetchWithRetry`: timeout, 2 retries on 429/5xx) · `pagination.ts` (follows `next`, same origin only) · `bitbucket.collector.ts` (metadata, then commits/diffstat/diff in parallel; credentials and `ALLOWED_EMAILS`) · `bitbucket.allowlist.ts` (field projection). |
+| `src/core/storage/secure-file.ts` | The encrypted file format (`PRC1`, AES-256-GCM, HKDF from the repository UUID): `writeSecure`, `readSecure`, `readHeader`, `PlaintextFileError`. `purge.ts`: delete pre-encryption files. |
+| `src/core/auth/access-gate.ts` | `AccessGate.unlock()`: live check (credentials, `ALLOWED_EMAILS`, repository read access), then key material in memory for 60 s. |
 | `src/core/storage/data.store.ts` | `saveRevision`: raw revision → sanitized v4 manifest, index and per-file changes. The heart of the pipeline. |
 | `src/core/analyzer/` | Regex/heuristic analysis: `diff.parser` · `change.classifier` (kind) · `risk.analyzer` (tags/level) · `symbol.extractor` · `context-mode.classifier` (Read Strategy) · `sensitive.file.policy`. |
 | `src/core/privacy/` | `secret.scanner` (**the** secret redactor) · `pii.sanitizer` · `path.sanitizer` · `redaction.report`. |
 | `src/core/output/` | `revision.writer` (staged write, validate, swap, pack files, prune) · `revision.validator` · `output.reader` · `markdown.formatter` · `store-path.resolver` · `schema/*.v4.schema.ts`. |
 | `src/core/auth/`, `discovery/`, `generation/`, `orchestration/` | CLI only: login and capability probe, finding the user's open PRs, batch generation. |
 | `src/core/logging/` | CLI run logs (`Logs/<date>/*.jsonl`) · `log.redactor` (SecretScanner plus emails, UUIDs and repo identity). |
-| `src/cmd/` | Interactive terminal UI (`@inquirer/prompts`). |
+| `src/cmd/` | Interactive terminal UI (`@inquirer/prompts`); `context-viewer.screen.ts` shows decrypted synced PRs after login; `purge-plaintext.runner.ts` backs `node bin/cli.js purge-plaintext`. |
 | `src/utils/` | `logger.ts` · `text.normalizer.ts`. |
 | `tests/` | `run.mjs` (runner) · `server.test.ts` (MCP tools end to end) · `stdio.test.ts` · domain tests. |
 
 ## 4. MCP tools reference
 
-The PR tools take `pr_url` (`https://bitbucket.org/{workspace}/{repo}/pull-requests/{id}`). `get_pr_context_pack`, `get_pr_comments`, `list_my_open_prs` and `check_bitbucket_connection` contact Bitbucket. The file tools read the local revision and fail with `Error: PR is not synced yet…` until `get_pr_context_pack` has run.
+The PR tools take `pr_url` (`https://bitbucket.org/{workspace}/{repo}/pull-requests/{id}`). Every tool that touches local data first unlocks the repository with a live Bitbucket check (cached 60 s), so all tools are open world, and every one answers `Error: No access: …` when that check fails. The file tools read the local revision and fail with `Error: PR is not synced yet…` until `get_pr_context_pack` (or `sync_my_open_prs`) has run.
 
 | Tool | Parameters (defaults) | Returns | Annotations |
 |---|---|---|---|
 | `get_pr_context_pack` | `refresh` (false), `include_file_table` (false) | Markdown: Read Strategy (`Read next` / `Optional` / `Skip`), overview, change summary, description, commits. Starts with a `Note:` when Bitbucket could not be reached and cached data is shown. | writes local cache · open world |
-| `search_pr_files` | `path`, `language`, `status`, `change_kind`, `risk_tag`, `limit` (50, max 200) | JSON `{total, files[]}`. `path` matches the **sanitized** path. | read-only · local |
-| `get_pr_file_context` | `file_id`, `offset` (0), `max_chars` (16000) | Markdown for one file plus a sanitized diff page. Ends with `continue with offset N.` when there is more. | read-only · local |
-| `get_pr_file_changes` | `file_id`, `include_patch` (true), `offset`, `max_chars` | JSON `{change, patch?: {text, total_chars, next_offset}}` | read-only · local |
-| `get_pr_sync_status` | none | JSON `{synced, revision, updated_at, source_commit, target_commit, ai_reading_mode, stats}` | read-only · local |
+| `search_pr_files` | `path`, `language`, `status`, `change_kind`, `risk_tag`, `limit` (50, max 200) | JSON `{total, files[]}`. `path` matches the **sanitized** path. | read-only · open world (unlock) |
+| `get_pr_file_context` | `file_id`, `offset` (0), `max_chars` (16000) | Markdown for one file plus a sanitized diff page. Ends with `continue with offset N.` when there is more. | read-only · open world (unlock) |
+| `get_pr_file_changes` | `file_id`, `include_patch` (true), `offset`, `max_chars` | JSON `{change, patch?: {text, total_chars, next_offset}}` | read-only · open world (unlock) |
+| `get_pr_sync_status` | none | JSON `{synced, revision, updated_at, source_commit, target_commit, ai_reading_mode, stats}` | read-only · open world (unlock) |
+| `sync_my_open_prs` | `repository` (`workspace/repo`; default: every `BITBUCKET_REPOSITORY` entry), `force` (false) | JSON `{total, synced, unchanged, failed, prs:[{pr_url, id, title, status, ticket, overall_risk, files_changed, updated_on, error?}]}`. 3 PRs at a time; unchanged PRs cost one metadata call. `AUTO_SYNC_ON_START=true` runs the same in the background at startup. | writes local cache · open world |
 | `get_pr_comments` | `include_resolved` (true), `offset` (0), `limit` (50, max 200) | JSON `{total, complete, comments:[{id, parent_id, file_id?, path?, line?, resolved, created_on, author?, text}], next_offset}`. Fetched live; text sanitized; `author` only when `PRIVACY_REMOVE_AUTHOR=false`; inline comments get `file_id` when the PR is synced. | read-only · open world |
 | `list_my_open_prs` | `repository` (`workspace/repo`; default: every `BITBUCKET_REPOSITORY` entry) | JSON `{total, prs:[{pr_url, repository, id, title, is_draft, source_branch, target_branch, updated_on, local}]}` | read-only · open world |
 | `check_bitbucket_connection` | none (no `pr_url`) | JSON `{connected: true}`, or an error naming the cause (HTTP 401 credentials, 403 missing `read:user`, unreachable, `ALLOWED_EMAILS`). The hub smoke check uses it. | read-only · open world |
@@ -107,3 +112,4 @@ The PR tools take `pr_url` (`https://bitbucket.org/{workspace}/{repo}/pull-reque
 - [docs/STANDARDS.md](docs/STANDARDS.md): code style, tool and privacy contracts, error handling.
 - [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md): every dependency and what we deliberately avoid.
 - [docs/HUB_INTEGRATION.md](docs/HUB_INTEGRATION.md): running as an mcp-hub child.
+- [docs/ENCRYPTION.md](docs/ENCRYPTION.md): encrypted ai-context format, key source, access gate, limits, migration.
