@@ -9,22 +9,7 @@ import { TextNormalizer } from '../../utils/text.normalizer.js';
 import { StorePathResolver } from './store-path.resolver.js';
 import { MarkdownFormatter } from './markdown.formatter.js';
 import { ContextModeClassifier } from '../analyzer/context-mode.classifier.js';
-
-export interface WriteRevisionOptions {
-  workspace: string;
-  repoSlug: string;
-  prId: number;
-  sourceHash: string;
-  destinationHash: string;
-  manifestData: Omit<PRManifestV4, 'schema_version'>;
-  fileEntries: FileIndexEntryV4[];
-  fileChangesMap: Map<string, { change: FileChangeV4; diffContent: string }>;
-  commitsJsonl: string[];
-  coverageData: PRCoverageV4;
-  provider?: string;
-  company?: string;
-  root?: string;
-}
+import { AtomicWriter } from '../storage/atomic.writer.js';
 
 export class RevisionWriter {
   static getPROutputDir(workspace: string, repoSlug: string, prId: number, company?: string, root?: string): string {
@@ -42,7 +27,6 @@ export class RevisionWriter {
     fileChangesMap: Map<string, { change: FileChangeV4; diffContent: string }>,
     commitsJsonl: string[],
     coverageData: PRCoverageV4,
-    provider: string = 'bitbucket',
     company?: string,
     root?: string
   ): { revisionId: string; manifest: PRManifestV4; prDir: string; revisionDir: string } {
@@ -78,7 +62,7 @@ export class RevisionWriter {
         ai_reading: aiReading,
         provenance: {
           generated_at: nowIso,
-          provider: provider,
+          provider: 'bitbucket',
           repository: `${workspace}/${repoSlug}`,
           pull_request_id: prId,
           normalization_version: '1.0.0'
@@ -116,8 +100,25 @@ export class RevisionWriter {
       }
       fs.renameSync(tmpRevDir, targetRevDir);
 
-      // 7. Update current.json active pointer ONLY AFTER validation passes
-      const currentJsonPath = path.join(prDir, 'current.json');
+      // 7. Top-level AI context pack. Each file is replaced atomically; files/ is rebuilt aside and
+      //    swapped in so ids from an older, larger revision never linger.
+      const topFilesDir = path.join(prDir, 'files');
+      const tmpFilesDir = path.join(prDir, `.tmp-files-${Date.now()}`);
+      fs.mkdirSync(tmpFilesDir, { recursive: true });
+      fileEntries.forEach(entry => {
+        const detail = fileChangesMap.get(entry.id);
+        if (detail) fs.writeFileSync(path.join(tmpFilesDir, `${entry.id}.md`), MarkdownFormatter.formatFileDetail(entry, detail), 'utf-8');
+      });
+      fs.rmSync(topFilesDir, { recursive: true, force: true });
+      fs.renameSync(tmpFilesDir, topFilesDir);
+
+      AtomicWriter.writeFileSync(path.join(prDir, 'context.md'), MarkdownFormatter.formatContextPack(`${workspace}/${repoSlug}`, fullManifest, commitsJsonl, aiReading));
+      AtomicWriter.writeFileSync(path.join(prDir, 'files.md'), MarkdownFormatter.formatFilesSummaryList(fileEntries));
+      AtomicWriter.writeFileSync(path.join(prDir, 'actions.md'), MarkdownFormatter.formatActionsSummary(coverageData));
+      // Top-level manifest.json kept for backward compatibility.
+      AtomicWriter.writeFileSync(path.join(prDir, 'manifest.json'), JSON.stringify(fullManifest, null, 2));
+
+      // 8. current.json is the commit point: written last, only after validation and the pack succeeded.
       const currentData = {
         active_revision: revisionId,
         updated_at: nowIso,
@@ -133,52 +134,9 @@ export class RevisionWriter {
         active_revision_path: `revisions/${revisionId}`,
         ai_reading_mode: aiReading.mode
       };
-      fs.writeFileSync(currentJsonPath, JSON.stringify(currentData, null, 2), 'utf-8');
+      AtomicWriter.writeFileSync(path.join(prDir, 'current.json'), JSON.stringify(currentData, null, 2));
 
-      // 8. Write top-level manifest.json for backward compatibility
-      fs.writeFileSync(path.join(prDir, 'manifest.json'), JSON.stringify(fullManifest, null, 2), 'utf-8');
-
-      // 9. Generate AI Context Pack files
-      const comp = company || StorePathResolver.DEFAULT_COMPANY;
-      const appName = StorePathResolver.DEFAULT_APP;
-      const featName = StorePathResolver.DEFAULT_FEATURE;
-      const folderName = StorePathResolver.getPRFolderName(repoSlug, prId);
-
-      // Write context.md
-      const contextMd = MarkdownFormatter.formatContextPack(
-        comp,
-        appName,
-        featName,
-        folderName,
-        workspace,
-        repoSlug,
-        fullManifest,
-        fileEntries,
-        fileChangesMap,
-        commitsJsonl,
-        coverageData,
-        aiReading
-      );
-      fs.writeFileSync(path.join(prDir, 'context.md'), contextMd, 'utf-8');
-
-      // Write files.md
-      const filesMd = MarkdownFormatter.formatFilesSummaryList(fileEntries);
-      fs.writeFileSync(path.join(prDir, 'files.md'), filesMd, 'utf-8');
-
-      // Write actions.md
-      const actionsMd = MarkdownFormatter.formatActionsSummary(coverageData, 'complete', provider);
-      fs.writeFileSync(path.join(prDir, 'actions.md'), actionsMd, 'utf-8');
-
-      // Write files/*.md
-      const topFilesDir = path.join(prDir, 'files');
-      fs.mkdirSync(topFilesDir, { recursive: true });
-      fileEntries.forEach(entry => {
-        const detail = fileChangesMap.get(entry.id);
-        if (detail) {
-          const fileMd = MarkdownFormatter.formatFileDetail(entry, detail);
-          fs.writeFileSync(path.join(topFilesDir, `${entry.id}.md`), fileMd, 'utf-8');
-        }
-      });
+      this.pruneRevisions(revisionsDir, revisionId);
 
       return {
         revisionId,
@@ -193,5 +151,17 @@ export class RevisionWriter {
       }
       throw err;
     }
+  }
+
+  // ponytail: fixed keep-count by mtime; make it configurable if anyone needs older revisions.
+  static readonly KEEP_REVISIONS = 5;
+
+  private static pruneRevisions(revisionsDir: string, activeRevision: string): void {
+    const old = fs.readdirSync(revisionsDir, { withFileTypes: true })
+      .filter(e => e.isDirectory() && !e.name.startsWith('.') && e.name !== activeRevision)
+      .map(e => ({ dir: path.join(revisionsDir, e.name), mtime: fs.statSync(path.join(revisionsDir, e.name)).mtimeMs }))
+      .sort((a, b) => b.mtime - a.mtime)
+      .slice(this.KEEP_REVISIONS - 1);
+    for (const { dir } of old) fs.rmSync(dir, { recursive: true, force: true });
   }
 }

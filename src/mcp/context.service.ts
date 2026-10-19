@@ -1,238 +1,140 @@
 import { DataStore } from '../core/storage/data.store.js';
-import { PRRegistry } from '../core/registry/pr.registry.js';
+import { PRRegistry, ParsedPRUrl } from '../core/registry/pr.registry.js';
 import { BitbucketCollector } from '../core/bitbucket/bitbucket.collector.js';
 import { PRManifestV4 } from '../core/output/schema/manifest.v4.schema.js';
-import { FileChangeV4 } from '../core/output/schema/file_change.v4.schema.js';
 import { OutputReader } from '../core/output/output.reader.js';
 import { FileIndexEntryV4 } from '../core/output/schema/file_index.v4.schema.js';
+import { FileChangeV4 } from '../core/output/schema/file_change.v4.schema.js';
+import { SecretScanner } from '../core/privacy/secret.scanner.js';
 
+export interface Page {
+  text: string;
+  total_chars: number;
+  /** Offset to pass for the next page, or null when this page reaches the end. */
+  next_offset: number | null;
+}
+
+export interface FileFilters {
+  path?: string;
+  language?: string;
+  status?: string;
+  change_kind?: string;
+  risk_tag?: string;
+  limit: number;
+}
+
+const NOT_SYNCED = 'PR is not synced yet. Call get_pr_context_pack for this pr_url first.';
+
+/**
+ * MCP-facing reads over the on-disk revision store (the single source of truth: no RAM cache).
+ * Only getContextPack talks to Bitbucket; every other method reads local files.
+ */
 export class PRContextService {
-  private static manifestCache = new Map<string, { manifest: PRManifestV4; revisionId: string; timestamp: number }>();
-  private static fileChangeCache = new Map<string, { change: FileChangeV4; diffContent?: string; timestamp: number }>();
-  private static inFlightRequests = new Map<string, Promise<PRManifestV4>>();
+  private static inFlight = new Map<string, Promise<PRManifestV4>>();
 
-  // In-memory cache only; the on-disk revision store is the source of truth.
-  private static getTTL(): number {
-    return 30 * 24 * 60 * 60 * 1000;
+  static page(text: string, offset: number, maxChars: number): Page {
+    const end = Math.min(text.length, offset + maxChars);
+    return { text: text.slice(offset, end), total_chars: text.length, next_offset: end < text.length ? end : null };
   }
 
-  private static getMaxEntries(): number {
-    return 30;
+  /** Collects the PR and writes a new revision. Concurrent calls for one PR share one fetch, refresh or not. */
+  static sync(pr: ParsedPRUrl, collector = new BitbucketCollector()): Promise<PRManifestV4> {
+    const key = `${pr.workspace}:${pr.repoSlug}:${pr.prId}`;
+    let task = this.inFlight.get(key);
+    if (!task) {
+      task = collector
+        .collect(pr.workspace, pr.repoSlug, pr.prId)
+        .then(raw => DataStore.saveRevision(pr.workspace, pr.repoSlug, pr.prId, raw).manifest)
+        .finally(() => this.inFlight.delete(key));
+      this.inFlight.set(key, task);
+    }
+    return task;
   }
 
-  static async getManifest(prUrl: string, refresh = false): Promise<PRManifestV4> {
-    const parsed = PRRegistry.parseAndValidateUrl(prUrl);
-    const prKey = `${parsed.workspace}:${parsed.repoSlug}:${parsed.prId}`;
-
-    // 1. Check in-flight request deduplication
-    if (!refresh && this.inFlightRequests.has(prKey)) {
-      return await this.inFlightRequests.get(prKey)!;
+  /**
+   * Re-syncs when there is no local revision, on refresh, or when the PR's source/target commits
+   * moved since the last sync. Returns a note when freshness could not be checked (offline).
+   */
+  static async ensureFresh(pr: ParsedPRUrl, refresh: boolean): Promise<string | null> {
+    // Built outside the try: missing credentials or ALLOWED_EMAILS denial must fail the call.
+    const collector = new BitbucketCollector();
+    const active = OutputReader.getActiveRevision(pr.workspace, pr.repoSlug, pr.prId);
+    if (refresh || !active) {
+      await this.sync(pr, collector);
+      return null;
     }
 
-    const fetchTask = (async (): Promise<PRManifestV4> => {
-      const now = Date.now();
-      const ttl = this.getTTL();
-
-      // 2. Check RAM Cache unless refresh is requested
-      if (!refresh && this.manifestCache.has(prKey)) {
-        const cached = this.manifestCache.get(prKey)!;
-        if (now - cached.timestamp < ttl) {
-          return cached.manifest;
-        }
-        this.manifestCache.delete(prKey);
-      }
-
-      // 3. Check Local Disk Output DataStore unless refresh is requested
-      if (!refresh) {
-        const active = DataStore.getActiveRevision(parsed.workspace, parsed.repoSlug, parsed.prId);
-        if (active && active.manifest) {
-          this.setManifestCache(prKey, active.manifest, active.current.active_revision);
-          return active.manifest;
-        }
-      }
-
-      // 4. Collect from Bitbucket API if not in cache/disk or if refresh is true
-      const collector = new BitbucketCollector();
-      const rawRev = await collector.collect(parsed.workspace, parsed.repoSlug, parsed.prId);
-      const result = DataStore.saveRevision(parsed.workspace, parsed.repoSlug, parsed.prId, rawRev);
-
-      this.setManifestCache(prKey, result.manifest, result.revisionId);
-      return result.manifest;
-    })();
-
-    this.inFlightRequests.set(prKey, fetchTask);
+    let head: { source: string; destination: string };
     try {
-      const result = await fetchTask;
-      return result;
-    } finally {
-      this.inFlightRequests.delete(prKey);
+      head = await collector.getHeadCommits(pr.workspace, pr.repoSlug, pr.prId);
+    } catch (err) {
+      const reason = SecretScanner.scanAndRedact(err instanceof Error ? err.message : String(err));
+      return `Note: could not check Bitbucket for newer commits (${reason}); showing the revision synced at ${active.current.updated_at}.`;
     }
+    if (head.source !== active.current.source_commit || head.destination !== active.current.target_commit) {
+      await this.sync(pr, collector);
+    }
+    return null;
   }
 
-  static async getFileChange(
+  static async getContextPack(prUrl: string, refresh: boolean, includeFileTable: boolean): Promise<string> {
+    const pr = PRRegistry.parseAndValidateUrl(prUrl);
+    const note = await this.ensureFresh(pr, refresh);
+    const context = OutputReader.getContextPack(pr.workspace, pr.repoSlug, pr.prId);
+    if (!context) throw new Error('Context pack generation failed: context.md was not written.');
+
+    const parts = [note, context];
+    if (includeFileTable) parts.push(OutputReader.getFilesSummary(pr.workspace, pr.repoSlug, pr.prId));
+    return parts.filter(Boolean).join('\n\n---\n\n');
+  }
+
+  private static requireSynced(prUrl: string): ParsedPRUrl {
+    const pr = PRRegistry.parseAndValidateUrl(prUrl);
+    if (!OutputReader.getActiveRevision(pr.workspace, pr.repoSlug, pr.prId)) throw new Error(NOT_SYNCED);
+    return pr;
+  }
+
+  static getFileContext(prUrl: string, fileId: string | number, offset: number, maxChars: number): Page {
+    const pr = this.requireSynced(prUrl);
+    const text = OutputReader.getFileContext(pr.workspace, pr.repoSlug, pr.prId, fileId);
+    if (!text) throw new Error(`No file ${OutputReader.normalizeFileId(fileId)} in this PR. Use search_pr_files to list file ids.`);
+    return this.page(text, offset, maxChars);
+  }
+
+  static getFileChange(
     prUrl: string,
     fileId: string | number,
-    includePatch = true,
-    maxBytes = 16000
-  ): Promise<{ change: FileChangeV4; diffContent?: string; truncated?: boolean } | null> {
-    const parsed = PRRegistry.parseAndValidateUrl(prUrl);
-
-    // Coerce numeric input to string ID format (e.g. 1 -> "file_0001")
-    const normalizedId = OutputReader.normalizeFileId(fileId);
-
-    const detailKey = `${parsed.workspace}:${parsed.repoSlug}:${parsed.prId}:${normalizedId}`;
-    const ttl = this.getTTL();
-    const now = Date.now();
-
-    let record = this.fileChangeCache.get(detailKey);
-    if (!record || now - record.timestamp >= ttl) {
-      const loaded = DataStore.getFileDetail(parsed.workspace, parsed.repoSlug, parsed.prId, normalizedId);
-      if (!loaded) return null;
-
-      record = { change: loaded.change, diffContent: loaded.diffContent, timestamp: now };
-      this.setFileChangeCache(detailKey, record);
-    }
-
-    let diffContent = includePatch ? record.diffContent : undefined;
-    let truncated = false;
-
-    if (diffContent && diffContent.length > maxBytes) {
-      diffContent = diffContent.substring(0, maxBytes) + '\n... [Diff truncated due to size limit]';
-      truncated = true;
-    }
-
+    includePatch: boolean,
+    offset: number,
+    maxChars: number
+  ): { change: FileChangeV4; patch?: Page } {
+    const pr = this.requireSynced(prUrl);
+    const detail = OutputReader.getFileChange(pr.workspace, pr.repoSlug, pr.prId, fileId);
+    if (!detail) throw new Error(`No file ${OutputReader.normalizeFileId(fileId)} in this PR. Use search_pr_files to list file ids.`);
     return {
-      change: record.change,
-      diffContent,
-      truncated
+      change: detail.change,
+      ...(includePatch ? { patch: this.page(detail.diffContent ?? '', offset, maxChars) } : {})
     };
   }
 
-  static searchPRFiles(
-    prUrl: string,
-    filters?: {
-      path?: string;
-      language?: string;
-      status?: string;
-      change_kind?: string;
-      risk_tag?: string;
-      limit?: number;
-    }
-  ): { total: number; files: FileIndexEntryV4[] } {
-    const parsed = PRRegistry.parseAndValidateUrl(prUrl);
-    let files = OutputReader.getFileIndex(parsed.workspace, parsed.repoSlug, parsed.prId);
-
-    if (filters) {
-      if (filters.path) {
-        const query = filters.path.toLowerCase();
-        files = files.filter(f => f.path.toLowerCase().includes(query));
-      }
-      if (filters.language) {
-        files = files.filter(f => f.language.toLowerCase() === filters.language!.toLowerCase());
-      }
-      if (filters.status) {
-        files = files.filter(f => f.status.toLowerCase() === filters.status!.toLowerCase());
-      }
-      if (filters.change_kind) {
-        files = files.filter(f => f.change_kind.toLowerCase() === filters.change_kind!.toLowerCase());
-      }
-      if (filters.risk_tag) {
-        files = files.filter(f => f.risk_tags.includes(filters.risk_tag!));
-      }
-    }
-
-    const limit = filters?.limit || 50;
-    return {
-      total: files.length,
-      files: files.slice(0, limit)
-    };
+  static searchPRFiles(prUrl: string, filters: FileFilters): { total: number; files: FileIndexEntryV4[] } {
+    const pr = this.requireSynced(prUrl);
+    const eq = (a: string, b?: string) => !b || a.toLowerCase() === b.toLowerCase();
+    const files = OutputReader.getFileIndex(pr.workspace, pr.repoSlug, pr.prId).filter(f =>
+      (!filters.path || f.path.toLowerCase().includes(filters.path.toLowerCase())) &&
+      eq(f.language, filters.language) &&
+      eq(f.status, filters.status) &&
+      eq(f.change_kind, filters.change_kind) &&
+      (!filters.risk_tag || f.risk_tags.includes(filters.risk_tag))
+    );
+    return { total: files.length, files: files.slice(0, filters.limit) };
   }
 
-  static getSyncStatus(prUrl: string): { synced: boolean; current?: any; manifestStats?: any } {
-    try {
-      const parsed = PRRegistry.parseAndValidateUrl(prUrl);
-      const active = OutputReader.getActiveRevision(parsed.workspace, parsed.repoSlug, parsed.prId);
-
-      if (active) {
-        return {
-          synced: true,
-          current: active.current,
-          manifestStats: active.manifest?.stats
-        };
-      }
-    } catch {
-      // Ignore
-    }
-
-    return { synced: false };
-  }
-
-  static async refreshPRData(prUrl: string): Promise<PRManifestV4> {
-    return this.getManifest(prUrl, true);
-  }
-
-  static async getContextPack(prUrl: string, refresh = false, detailLevel?: 'auto' | 'skim' | 'standard' | 'deep'): Promise<string> {
-    const parsed = PRRegistry.parseAndValidateUrl(prUrl);
-    if (refresh) {
-      await this.refreshPRData(prUrl);
-    }
-    let context = OutputReader.getContextPack(parsed.workspace, parsed.repoSlug, parsed.prId);
-    if (!context) {
-      // If context.md doesn't exist locally yet, fetch & generate it
-      await this.getManifest(prUrl, true);
-      context = OutputReader.getContextPack(parsed.workspace, parsed.repoSlug, parsed.prId);
-    }
-
-    if (!context) {
-      return '# Error: Context pack generation failed.';
-    }
-
-    if (detailLevel === 'deep') {
-      const filesSummary = OutputReader.getFilesSummary(parsed.workspace, parsed.repoSlug, parsed.prId);
-      if (filesSummary) {
-        context += `\n\n---\n\n${filesSummary}`;
-      }
-    }
-
-    return context;
-  }
-
-  static async getFilesSummary(prUrl: string): Promise<string> {
-    const parsed = PRRegistry.parseAndValidateUrl(prUrl);
-    let summary = OutputReader.getFilesSummary(parsed.workspace, parsed.repoSlug, parsed.prId);
-    if (!summary) {
-      await this.getManifest(prUrl, false);
-      summary = OutputReader.getFilesSummary(parsed.workspace, parsed.repoSlug, parsed.prId);
-    }
-    return summary || '# Error: Files summary (files.md) not found.';
-  }
-
-  static async getFileContext(prUrl: string, fileId: string | number): Promise<string> {
-    const parsed = PRRegistry.parseAndValidateUrl(prUrl);
-    let fileContext = OutputReader.getFileContext(parsed.workspace, parsed.repoSlug, parsed.prId, fileId);
-    if (!fileContext) {
-      // Make sure PR manifest/data is available
-      await this.getManifest(prUrl, false);
-      fileContext = OutputReader.getFileContext(parsed.workspace, parsed.repoSlug, parsed.prId, fileId);
-    }
-    return fileContext || `# Error: Context for file ${fileId} not found.`;
-  }
-
-  private static setManifestCache(key: string, manifest: PRManifestV4, revisionId: string): void {
-    const maxEntries = this.getMaxEntries();
-    if (this.manifestCache.size >= maxEntries) {
-      const firstKey = this.manifestCache.keys().next().value;
-      if (firstKey) this.manifestCache.delete(firstKey);
-    }
-    this.manifestCache.set(key, { manifest, revisionId, timestamp: Date.now() });
-  }
-
-  private static setFileChangeCache(key: string, record: { change: FileChangeV4; diffContent?: string; timestamp: number }): void {
-    const maxEntries = this.getMaxEntries() * 20;
-    if (this.fileChangeCache.size >= maxEntries) {
-      const firstKey = this.fileChangeCache.keys().next().value;
-      if (firstKey) this.fileChangeCache.delete(firstKey);
-    }
-    this.fileChangeCache.set(key, record);
+  static getSyncStatus(prUrl: string): object {
+    const pr = PRRegistry.parseAndValidateUrl(prUrl);
+    const active = OutputReader.getActiveRevision(pr.workspace, pr.repoSlug, pr.prId);
+    if (!active) return { synced: false };
+    const { active_revision, updated_at, source_commit, target_commit, ai_reading_mode } = active.current as any;
+    return { synced: true, revision: active_revision, updated_at, source_commit, target_commit, ai_reading_mode, stats: active.manifest?.stats };
   }
 }

@@ -18,6 +18,16 @@ export class SecretScanner {
       replacement: '[REDACTED:BASIC_AUTH]'
     },
     {
+      category: 'auth_header',
+      regex: /(Authorization:\s*)(?!\[REDACTED)[^\r\n]+/gi,
+      replacement: '$1[REDACTED]'
+    },
+    {
+      category: 'json_secret',
+      regex: /"(app_password|token|password|secret|authorization)"\s*:\s*"[^"]+"/gi,
+      replacement: '"$1": "[REDACTED]"'
+    },
+    {
       category: 'atlassian_token',
       regex: /\b(?:ATBB|ATATT)[A-Za-z0-9_=-]{10,}/g,
       replacement: '[REDACTED:ATLASSIAN_TOKEN]'
