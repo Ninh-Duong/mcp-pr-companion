@@ -15,6 +15,10 @@ delete process.env.ALLOWED_EMAILS;
 
 const { createServer } = await import('../src/mcp/tools.ts');
 const { ConfigManager } = await import('../src/config/config.manager.ts');
+const { PRContextService } = await import('../src/mcp/context.service.ts');
+const { AccessGate } = await import('../src/core/auth/access-gate.ts');
+const { readSecure } = await import('../src/core/storage/secure-file.ts');
+const REPO_UUID = '{7d3c0a52-1111-4222-8333-944455556666}';
 
 const PR_URL = 'https://bitbucket.org/acme/demo-repo/pull-requests/7';
 const REAL_PATH = 'src/api/internal/billing/InvoiceController.ts';
@@ -25,10 +29,14 @@ const diffText = (n: number) =>
 
 let sourceHash = 'aaaaaaaaaaaa';
 let userStatus = 200;
+let repoStatus = 200;
 const calls: Record<string, number> = { metadata: 0, diff: 0 };
 globalThis.fetch = (async (input: string | URL) => {
   const url = String(input);
   const ok = (body: unknown) => new Response(typeof body === 'string' ? body : JSON.stringify(body), { status: 200 });
+  if (url.endsWith('/repositories/acme/demo-repo')) {
+    return repoStatus === 200 ? ok({ uuid: REPO_UUID, full_name: 'acme/demo-repo' }) : new Response('{}', { status: repoStatus, statusText: 'Forbidden' });
+  }
   if (url.endsWith('/2.0/user')) {
     return userStatus === 200 ? ok({ uuid: '{u}', display_name: 'Dev' }) : new Response('{}', { status: userStatus, statusText: 'Unauthorized' });
   }
@@ -136,8 +144,31 @@ console.log('  ✓ diff headers use the sanitized path');
 
 // 9. Manifest keeps the PR draft flag
 const prDir = path.resolve('ai-context', 'acme', 'acme', 'demo-repo', 'pr_7');
-assert.equal(JSON.parse(fs.readFileSync(path.join(prDir, 'manifest.json'), 'utf-8')).is_draft, true);
+assert.equal(JSON.parse(readSecure(path.join(prDir, 'manifest.json'))).is_draft, true);
 console.log('  ✓ manifest.is_draft comes from Bitbucket');
+
+// 9a. Encrypted at rest: every file starts with PRC1 and leaks neither content nor the key material
+const rawFiles: string[] = [];
+const walk = (dir: string) => fs.readdirSync(dir, { withFileTypes: true }).forEach(e => e.isDirectory() ? walk(path.join(dir, e.name)) : rawFiles.push(path.join(dir, e.name)));
+walk(prDir);
+assert.ok(rawFiles.length > 5);
+for (const file of rawFiles) {
+  const raw = fs.readFileSync(file);
+  assert.equal(raw.subarray(0, 5).toString(), 'PRC1\n', `${file} is encrypted`);
+  const text = raw.toString('latin1');
+  assert.ok(!text.includes('invoice') && !text.includes('InvoiceController') && !text.includes('7d3c0a52'), `${file} leaks nothing`);
+}
+console.log(`  ✓ ${rawFiles.length} files on disk are encrypted (no title, path or repository id in the bytes)`);
+
+// 9a'. No repository access: every read is refused, cached data stays sealed
+AccessGate.lockAll();
+repoStatus = 403;
+for (const [tool, args] of [['get_pr_context_pack', { pr_url: PR_URL }], ['search_pr_files', { pr_url: PR_URL }], ['get_pr_file_context', { pr_url: PR_URL, file_id: 1 }], ['get_pr_sync_status', { pr_url: PR_URL }]] as const) {
+  const res = await call(tool, args);
+  assert.ok(res.isError && res.text.startsWith('Error: No access: this account cannot read acme/demo-repo'), `${tool} refused`);
+}
+repoStatus = 200;
+console.log('  ✓ without repository access every read tool answers "No access"');
 
 // 9b. Comments: deleted dropped, sanitized, inline mapped to file_id, paged, resolved filter
 const comments = JSON.parse((await call('get_pr_comments', { pr_url: PR_URL })).text);
@@ -170,6 +201,23 @@ assert.ok(bad.isError && bad.text.startsWith('Error: '));
 const badId = await call('get_pr_file_context', { pr_url: PR_URL, file_id: '../../etc/passwd' });
 assert.ok(badId.isError && /Invalid file_id/.test(badId.text));
 console.log('  ✓ invalid input returns isError "Error: …"');
+
+// 10b. Batch sync of my open PRs (+ AUTO_SYNC_ON_START path)
+const batch = JSON.parse((await call('sync_my_open_prs', { repository: 'acme/demo-repo' })).text);
+assert.deepEqual([batch.total, batch.unchanged, batch.failed], [1, 1, 0]);
+assert.equal(batch.prs[0].pr_url, PR_URL);
+assert.equal(batch.prs[0].ticket, 'WCE-12');
+assert.ok(batch.prs[0].overall_risk && batch.prs[0].files_changed === 1);
+const forced = JSON.parse((await call('sync_my_open_prs', { repository: 'acme/demo-repo', force: true })).text);
+assert.equal(forced.prs[0].status, 'synced');
+const before = calls.diff;
+sourceHash = 'dddddddddddd';
+process.env.BITBUCKET_REPOSITORY = 'acme/demo-repo';
+await PRContextService.autoSync();
+delete process.env.BITBUCKET_REPOSITORY;
+assert.equal(calls.diff, before + 1, 'auto-sync re-synced the PR whose commit moved');
+assert.match(fs.readFileSync('Logs/mcp-server.log', 'utf-8'), /auto_sync done total=1 synced=1 unchanged=0 failed=0/);
+console.log('  ✓ sync_my_open_prs reports synced/unchanged with ticket and risk; autoSync syncs moved PRs');
 
 // 11. Health check: success payload, and a clear error on bad credentials (no PII in either)
 const health = await call('check_bitbucket_connection', {});

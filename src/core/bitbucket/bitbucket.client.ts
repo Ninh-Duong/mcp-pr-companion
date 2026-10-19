@@ -36,6 +36,11 @@ export class BitbucketClient {
     return PaginationHelper.fetchAllPages(url, this.headers, options);
   }
 
+  /** Repository details (needs read:repository); its uuid is the ai-context key material. */
+  async getRepository(workspace: string, repoSlug: string, options: BitbucketFetchOptions = {}): Promise<any> {
+    return this.fetchJson(`https://api.bitbucket.org/2.0/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}`, options);
+  }
+
   /** The authenticated account (needs read:user). Used as a credentials check. */
   async getCurrentUser(options: BitbucketFetchOptions = {}): Promise<any> {
     return this.fetchJson('https://api.bitbucket.org/2.0/user', options);

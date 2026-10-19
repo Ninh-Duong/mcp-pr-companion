@@ -1,6 +1,12 @@
 import fs from 'fs';
 import path from 'path';
 import { RevisionValidator } from '../src/core/output/revision.validator.js';
+import { writeSecure } from '../src/core/storage/secure-file.js';
+import { AccessGate } from '../src/core/auth/access-gate.js';
+
+// Fixtures are written encrypted, exactly as RevisionWriter does.
+AccessGate.setMaterial('test-ws', 'test-repo', '{00000000-0000-0000-0000-000000000001}');
+const writeTestFile = (file: string, data: string, _encoding?: string) => writeSecure(file, data, { workspace: 'test-ws', repoSlug: 'test-repo', prId: 1 });
 
 function runIntegrityTests() {
   console.log('🧪 [INTEGRITY TEST] Running Referential Integrity & Security Tests...');
@@ -75,15 +81,15 @@ function runIntegrityTests() {
       }
     };
 
-    fs.writeFileSync(path.join(tmpTestDir, 'manifest.json'), JSON.stringify(manifest), 'utf-8');
-    fs.writeFileSync(path.join(tmpTestDir, 'files.index.jsonl'), JSON.stringify(fileIndex), 'utf-8');
-    fs.writeFileSync(path.join(tmpTestDir, 'commits.jsonl'), 'commit msg', 'utf-8');
-    fs.writeFileSync(path.join(tmpTestDir, 'coverage.json'), JSON.stringify(coverage), 'utf-8');
+    writeTestFile(path.join(tmpTestDir, 'manifest.json'), JSON.stringify(manifest), 'utf-8');
+    writeTestFile(path.join(tmpTestDir, 'files.index.jsonl'), JSON.stringify(fileIndex), 'utf-8');
+    writeTestFile(path.join(tmpTestDir, 'commits.jsonl'), 'commit msg', 'utf-8');
+    writeTestFile(path.join(tmpTestDir, 'coverage.json'), JSON.stringify(coverage), 'utf-8');
 
     const fileSubDir = path.join(tmpTestDir, 'files', 'file_0001');
     fs.mkdirSync(fileSubDir, { recursive: true });
-    fs.writeFileSync(path.join(fileSubDir, 'change.json'), JSON.stringify(fileChange), 'utf-8');
-    fs.writeFileSync(path.join(fileSubDir, 'patch.diff'), 'diff text', 'utf-8');
+    writeTestFile(path.join(fileSubDir, 'change.json'), JSON.stringify(fileChange), 'utf-8');
+    writeTestFile(path.join(fileSubDir, 'patch.diff'), 'diff text', 'utf-8');
 
     // Test 1: Valid revision passes
     const validRes = RevisionValidator.validate(tmpTestDir);
@@ -101,11 +107,11 @@ function runIntegrityTests() {
     console.log('  ✅ Missing file reference detection passed');
 
     // Restore change.json
-    fs.writeFileSync(path.join(fileSubDir, 'change.json'), JSON.stringify(fileChange), 'utf-8');
+    writeTestFile(path.join(fileSubDir, 'change.json'), JSON.stringify(fileChange), 'utf-8');
 
     // Test 3: Path Traversal detection
     const pathTraversalIndex = { ...fileIndex, detail_ref: '../../outside.json' };
-    fs.writeFileSync(path.join(tmpTestDir, 'files.index.jsonl'), JSON.stringify(pathTraversalIndex), 'utf-8');
+    writeTestFile(path.join(tmpTestDir, 'files.index.jsonl'), JSON.stringify(pathTraversalIndex), 'utf-8');
     const traversalRes = RevisionValidator.validate(tmpTestDir);
     if (traversalRes.valid) {
       throw new Error('Expected path traversal in detail_ref to fail validation');

@@ -1,3 +1,4 @@
+import { AccessGate } from '../src/core/auth/access-gate.js';
 import fs from 'fs';
 import { RevisionWriter } from '../src/core/output/revision.writer.js';
 import { OutputReader } from '../src/core/output/output.reader.js';
@@ -7,6 +8,7 @@ function runAtomicWriteTests() {
 
   const workspace = 'test-ws';
   const repoSlug = 'test-repo';
+  AccessGate.setMaterial(workspace, repoSlug, '{00000000-0000-0000-0000-000000000002}');
   const prId = 9999;
   const prDir = RevisionWriter.getPROutputDir(workspace, repoSlug, prId);
 

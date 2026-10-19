@@ -15,7 +15,8 @@ Workflow:
 3. get_pr_file_context(pr_url, file_id) for one file's summary and diff, or get_pr_file_changes(pr_url, file_id) for classification, risk evidence and symbols as JSON.
 4. get_pr_comments(pr_url) for review feedback (include_resolved=false for open threads only).
 Re-review: the pack's "Changed since last sync" section lists the only file ids that changed; open just those.
-No PR URL? list_my_open_prs lists the account's open PRs.
+No PR URL? list_my_open_prs lists the account's open PRs. "Sync all my PRs" = sync_my_open_prs(repository), then show its prs as a table.
+The local cache is encrypted: never read ai-context/ files directly. "No access: …" means the Bitbucket check failed; tell the user.
 Long text is paged: when next_offset is not null (or the text ends with "continue with offset N"), call again with that offset.
 File paths are sanitized by design; filter on what search_pr_files returns. Tools never write to Bitbucket.
 check_bitbucket_connection verifies the credentials when a call fails with an auth error.`;
@@ -25,7 +26,8 @@ const fileId = z.union([z.string(), z.number().int().nonnegative()]).describe('F
 const offset = z.number().int().min(0).default(0).describe('Character offset to start from. Use next_offset from the previous page.');
 const maxChars = z.number().int().min(500).max(100_000).default(16_000).describe('Maximum characters to return in this page.');
 
-const LOCAL_READ = { readOnlyHint: true, openWorldHint: false } as const;
+// Reads the local (encrypted) revision; open world because each call first unlocks the repository with a live Bitbucket check.
+const LOCAL_READ = { readOnlyHint: true, openWorldHint: true } as const;
 
 type ToolResult = { content: { type: 'text'; text: string }[]; isError?: boolean };
 
@@ -79,7 +81,7 @@ export function createServer(): McpServer {
       },
       annotations: LOCAL_READ
     },
-    ({ pr_url, ...filters }) => run('search_pr_files', () => json(PRContextService.searchPRFiles(pr_url, filters)))
+    ({ pr_url, ...filters }) => run('search_pr_files', async () => json(await PRContextService.searchPRFiles(pr_url, filters)))
   );
 
   server.registerTool(
@@ -91,7 +93,7 @@ export function createServer(): McpServer {
       annotations: LOCAL_READ
     },
     ({ pr_url, file_id, offset, max_chars }) =>
-      run('get_pr_file_context', () => withHint(PRContextService.getFileContext(pr_url, file_id, offset, max_chars)))
+      run('get_pr_file_context', async () => withHint(await PRContextService.getFileContext(pr_url, file_id, offset, max_chars)))
   );
 
   server.registerTool(
@@ -110,7 +112,7 @@ export function createServer(): McpServer {
       annotations: LOCAL_READ
     },
     ({ pr_url, file_id, include_patch, offset, max_chars }) =>
-      run('get_pr_file_changes', () => json(PRContextService.getFileChange(pr_url, file_id, include_patch, offset, max_chars)))
+      run('get_pr_file_changes', async () => json(await PRContextService.getFileChange(pr_url, file_id, include_patch, offset, max_chars)))
   );
 
   server.registerTool(
@@ -145,6 +147,22 @@ export function createServer(): McpServer {
   );
 
   server.registerTool(
+    'sync_my_open_prs',
+    {
+      title: 'Sync my open PRs',
+      description:
+        'Syncs every open PR authored by the configured account in one repository (or every BITBUCKET_REPOSITORY entry) into the encrypted local cache, skipping PRs without new commits unless force. Returns JSON {total, synced, unchanged, failed, prs:[{pr_url, id, title, status, ticket, overall_risk, files_changed, updated_on, error?}]}: show it to the user as a table.',
+      inputSchema: {
+        repository: z.string().optional().describe('"workspace/repo"; omit to use BITBUCKET_REPOSITORY.'),
+        force: z.boolean().default(false).describe('Re-sync every PR even if its commits did not move.')
+      },
+      // Writes only the local ai-context cache; reads Bitbucket.
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+    },
+    ({ repository, force }) => run('sync_my_open_prs', async () => json(await PRContextService.syncMyOpenPRs(repository, force)))
+  );
+
+  server.registerTool(
     'check_bitbucket_connection',
     {
       title: 'Check Bitbucket connection',
@@ -164,11 +182,11 @@ export function createServer(): McpServer {
     'get_pr_sync_status',
     {
       title: 'PR sync status',
-      description: 'Local-only check: whether a PR is cached, its revision, sync time, source/target commits and stats. Does not contact Bitbucket.',
+      description: 'Whether a PR is cached locally, its revision, sync time, source/target commits and stats. Does not fetch the PR (only the access check that unlocks the encrypted cache).',
       inputSchema: { pr_url: prUrl },
       annotations: LOCAL_READ
     },
-    ({ pr_url }) => run('get_pr_sync_status', () => json(PRContextService.getSyncStatus(pr_url)))
+    ({ pr_url }) => run('get_pr_sync_status', async () => json(await PRContextService.getSyncStatus(pr_url)))
   );
 
   return server;

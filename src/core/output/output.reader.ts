@@ -6,6 +6,7 @@ import { FileChangeV4 } from './schema/file_change.v4.schema.js';
 import { RevisionWriter } from './revision.writer.js';
 import { StorePathResolver } from './store-path.resolver.js';
 import { ConfigManager } from '../../config/config.manager.js';
+import { readSecure, PlaintextFileError } from '../storage/secure-file.js';
 
 export interface ActiveRevisionResult {
   current: {
@@ -21,6 +22,26 @@ export interface ActiveRevisionResult {
 }
 
 export class OutputReader {
+  /**
+   * Decrypted text of an ai-context file, or null when it is missing or still unencrypted
+   * (written before encryption: callers treat that as "not synced" and re-sync). Access errors
+   * ("No access …") and tampering ("Cannot decrypt …") are thrown, never hidden as "missing".
+   */
+  static readText(file: string): string | null {
+    if (!fs.existsSync(file)) return null;
+    try {
+      return readSecure(file);
+    } catch (err) {
+      if (err instanceof PlaintextFileError) return null;
+      throw err;
+    }
+  }
+
+  private static readJson<T>(file: string): T | null {
+    const text = this.readText(file);
+    return text === null ? null : (JSON.parse(text) as T);
+  }
+
   private static getConfiguredPathOptions(): { company?: string; root?: string } {
     try {
       const config = ConfigManager.loadBase();
@@ -86,17 +107,10 @@ export class OutputReader {
     const prDir = this.getPROutputDir(workspace, repoSlug, prId);
     const currentPath = path.join(prDir, 'current.json');
 
-    if (!fs.existsSync(currentPath)) {
-      return null;
-    }
-
-    try {
-      const current = JSON.parse(fs.readFileSync(currentPath, 'utf-8'));
-      const manifest = this.getManifest(workspace, repoSlug, prId, current.active_revision);
-      return { current, manifest };
-    } catch {
-      return null;
-    }
+    const current = this.readJson<ActiveRevisionResult['current']>(currentPath);
+    if (!current) return null;
+    const manifest = this.getManifest(workspace, repoSlug, prId, current.active_revision);
+    return manifest ? { current, manifest } : null;
   }
 
   private static resolveRevisionDir(workspace: string, repoSlug: string, prId: number, revisionId?: string): string | null {
@@ -120,32 +134,17 @@ export class OutputReader {
     const revDir = this.resolveRevisionDir(workspace, repoSlug, prId, revisionId);
     if (!revDir) return null;
 
-    const manifestPath = path.join(revDir, 'manifest.json');
-    if (!fs.existsSync(manifestPath)) return null;
-
-    try {
-      return JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as PRManifestV4;
-    } catch {
-      return null;
-    }
+    return this.readJson<PRManifestV4>(path.join(revDir, 'manifest.json'));
   }
 
   static getContextPack(workspace: string, repoSlug: string, prId: number): string | null {
     const prDir = this.getPROutputDir(workspace, repoSlug, prId);
-    const contextPath = path.join(prDir, 'context.md');
-    if (fs.existsSync(contextPath)) {
-      return fs.readFileSync(contextPath, 'utf-8');
-    }
-    return null;
+    return this.readText(path.join(prDir, 'context.md'));
   }
 
   static getFilesSummary(workspace: string, repoSlug: string, prId: number): string | null {
     const prDir = this.getPROutputDir(workspace, repoSlug, prId);
-    const filesPath = path.join(prDir, 'files.md');
-    if (fs.existsSync(filesPath)) {
-      return fs.readFileSync(filesPath, 'utf-8');
-    }
-    return null;
+    return this.readText(path.join(prDir, 'files.md'));
   }
 
   /**
@@ -163,26 +162,15 @@ export class OutputReader {
     const prDir = this.getPROutputDir(workspace, repoSlug, prId);
     const normalizedId = this.normalizeFileId(fileId);
 
-    const filePath = path.join(prDir, 'files', `${normalizedId}.md`);
-    if (fs.existsSync(filePath)) {
-      return fs.readFileSync(filePath, 'utf-8');
-    }
-    return null;
+    return this.readText(path.join(prDir, 'files', `${normalizedId}.md`));
   }
 
   static getFileIndex(workspace: string, repoSlug: string, prId: number, revisionId?: string): FileIndexEntryV4[] {
     const revDir = this.resolveRevisionDir(workspace, repoSlug, prId, revisionId);
     if (!revDir) return [];
 
-    const indexPath = path.join(revDir, 'files.index.jsonl');
-    if (!fs.existsSync(indexPath)) return [];
-
-    try {
-      const lines = fs.readFileSync(indexPath, 'utf-8').split('\n').filter(Boolean);
-      return lines.map(line => JSON.parse(line));
-    } catch {
-      return [];
-    }
+    const text = this.readText(path.join(revDir, 'files.index.jsonl'));
+    return text ? text.split('\n').filter(Boolean).map(line => JSON.parse(line)) : [];
   }
 
   static getFileChange(
@@ -200,17 +188,8 @@ export class OutputReader {
     const changePath = path.join(revDir, 'files', normalizedId, 'change.json');
     const diffPath = path.join(revDir, 'files', normalizedId, 'patch.diff');
 
-    if (!fs.existsSync(changePath)) return null;
-
-    try {
-      const change = JSON.parse(fs.readFileSync(changePath, 'utf-8')) as FileChangeV4;
-      let diffContent: string | undefined;
-      if (fs.existsSync(diffPath)) {
-        diffContent = fs.readFileSync(diffPath, 'utf-8');
-      }
-      return { change, diffContent };
-    } catch {
-      return null;
-    }
+    const change = this.readJson<FileChangeV4>(changePath);
+    if (!change) return null;
+    return { change, diffContent: this.readText(diffPath) ?? undefined };
   }
 }

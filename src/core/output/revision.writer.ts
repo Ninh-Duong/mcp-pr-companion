@@ -9,7 +9,7 @@ import { TextNormalizer } from '../../utils/text.normalizer.js';
 import { StorePathResolver } from './store-path.resolver.js';
 import { MarkdownFormatter } from './markdown.formatter.js';
 import { ContextModeClassifier } from '../analyzer/context-mode.classifier.js';
-import { AtomicWriter } from '../storage/atomic.writer.js';
+import { writeSecure, isEncrypted } from '../storage/secure-file.js';
 
 export class RevisionWriter {
   static getPROutputDir(workspace: string, repoSlug: string, prId: number, company?: string, root?: string): string {
@@ -36,6 +36,8 @@ export class RevisionWriter {
     const revisionId = `rev_${shortSrc}_${shortTgt}`;
     const revisionsDir = path.join(prDir, 'revisions');
     const targetRevDir = path.join(revisionsDir, revisionId);
+    // Every file is encrypted for this PR (AccessGate must have unlocked the repository).
+    const scope = { workspace, repoSlug, prId };
 
     // Staging directory for atomic writes
     const tmpRevDir = path.join(revisionsDir, `.tmp-${revisionId}-${Date.now()}`);
@@ -70,25 +72,25 @@ export class RevisionWriter {
       };
 
       // 1. Write manifest.json
-      fs.writeFileSync(path.join(tmpRevDir, 'manifest.json'), JSON.stringify(fullManifest, null, 2), 'utf-8');
+      writeSecure(path.join(tmpRevDir, 'manifest.json'), JSON.stringify(fullManifest, null, 2), scope);
 
       // 2. Write files.index.jsonl
       const indexLines = fileEntries.map(e => JSON.stringify(e)).join('\n');
-      fs.writeFileSync(path.join(tmpRevDir, 'files.index.jsonl'), indexLines, 'utf-8');
+      writeSecure(path.join(tmpRevDir, 'files.index.jsonl'), indexLines, scope);
 
       // 3. Write commits.jsonl
-      fs.writeFileSync(path.join(tmpRevDir, 'commits.jsonl'), commitsJsonl.join('\n'), 'utf-8');
+      writeSecure(path.join(tmpRevDir, 'commits.jsonl'), commitsJsonl.join('\n'), scope);
 
       // 4. Write coverage.json
-      fs.writeFileSync(path.join(tmpRevDir, 'coverage.json'), JSON.stringify(coverageData, null, 2), 'utf-8');
+      writeSecure(path.join(tmpRevDir, 'coverage.json'), JSON.stringify(coverageData, null, 2), scope);
 
       // 5. Write files detail and patch diffs
       const filesDir = path.join(tmpRevDir, 'files');
       fileChangesMap.forEach(({ change, diffContent }, fileId) => {
         const fileSubDir = path.join(filesDir, fileId);
         fs.mkdirSync(fileSubDir, { recursive: true });
-        fs.writeFileSync(path.join(fileSubDir, 'change.json'), JSON.stringify(change, null, 2), 'utf-8');
-        fs.writeFileSync(path.join(fileSubDir, 'patch.diff'), diffContent, 'utf-8');
+        writeSecure(path.join(fileSubDir, 'change.json'), JSON.stringify(change, null, 2), scope);
+        writeSecure(path.join(fileSubDir, 'patch.diff'), diffContent, scope);
       });
 
       // 6. Pre-Publish Validation Gate
@@ -107,16 +109,16 @@ export class RevisionWriter {
       fs.mkdirSync(tmpFilesDir, { recursive: true });
       fileEntries.forEach(entry => {
         const detail = fileChangesMap.get(entry.id);
-        if (detail) fs.writeFileSync(path.join(tmpFilesDir, `${entry.id}.md`), MarkdownFormatter.formatFileDetail(entry, detail), 'utf-8');
+        if (detail) writeSecure(path.join(tmpFilesDir, `${entry.id}.md`), MarkdownFormatter.formatFileDetail(entry, detail), scope);
       });
       fs.rmSync(topFilesDir, { recursive: true, force: true });
       fs.renameSync(tmpFilesDir, topFilesDir);
 
-      AtomicWriter.writeFileSync(path.join(prDir, 'context.md'), MarkdownFormatter.formatContextPack(`${workspace}/${repoSlug}`, fullManifest, commitsJsonl, aiReading));
-      AtomicWriter.writeFileSync(path.join(prDir, 'files.md'), MarkdownFormatter.formatFilesSummaryList(fileEntries));
-      AtomicWriter.writeFileSync(path.join(prDir, 'actions.md'), MarkdownFormatter.formatActionsSummary(coverageData));
+      writeSecure(path.join(prDir, 'context.md'), MarkdownFormatter.formatContextPack(`${workspace}/${repoSlug}`, fullManifest, commitsJsonl, aiReading), scope);
+      writeSecure(path.join(prDir, 'files.md'), MarkdownFormatter.formatFilesSummaryList(fileEntries), scope);
+      writeSecure(path.join(prDir, 'actions.md'), MarkdownFormatter.formatActionsSummary(coverageData), scope);
       // Top-level manifest.json kept for backward compatibility.
-      AtomicWriter.writeFileSync(path.join(prDir, 'manifest.json'), JSON.stringify(fullManifest, null, 2));
+      writeSecure(path.join(prDir, 'manifest.json'), JSON.stringify(fullManifest, null, 2), scope);
 
       // 8. current.json is the commit point: written last, only after validation and the pack succeeded.
       const currentData = {
@@ -134,7 +136,7 @@ export class RevisionWriter {
         active_revision_path: `revisions/${revisionId}`,
         ai_reading_mode: aiReading.mode
       };
-      AtomicWriter.writeFileSync(path.join(prDir, 'current.json'), JSON.stringify(currentData, null, 2));
+      writeSecure(path.join(prDir, 'current.json'), JSON.stringify(currentData, null, 2), scope);
 
       this.pruneRevisions(revisionsDir, revisionId);
 
@@ -156,12 +158,22 @@ export class RevisionWriter {
   // ponytail: fixed keep-count by mtime; make it configurable if anyone needs older revisions.
   static readonly KEEP_REVISIONS = 5;
 
+  /** Keeps the active revision plus the newest KEEP_REVISIONS - 1 others; always drops unencrypted (pre-encryption) ones. */
   private static pruneRevisions(revisionsDir: string, activeRevision: string): void {
-    const old = fs.readdirSync(revisionsDir, { withFileTypes: true })
+    const others = fs.readdirSync(revisionsDir, { withFileTypes: true })
       .filter(e => e.isDirectory() && !e.name.startsWith('.') && e.name !== activeRevision)
-      .map(e => ({ dir: path.join(revisionsDir, e.name), mtime: fs.statSync(path.join(revisionsDir, e.name)).mtimeMs }))
+      .map(e => path.join(revisionsDir, e.name));
+    const isPlaintext = (dir: string) => {
+      const manifest = path.join(dir, 'manifest.json');
+      return !fs.existsSync(manifest) || !isEncrypted(fs.readFileSync(manifest));
+    };
+    const stale = others.filter(isPlaintext);
+    const old = others
+      .filter(dir => !stale.includes(dir))
+      .map(dir => ({ dir, mtime: fs.statSync(dir).mtimeMs }))
       .sort((a, b) => b.mtime - a.mtime)
-      .slice(this.KEEP_REVISIONS - 1);
-    for (const { dir } of old) fs.rmSync(dir, { recursive: true, force: true });
+      .slice(this.KEEP_REVISIONS - 1)
+      .map(e => e.dir);
+    for (const dir of [...stale, ...old]) fs.rmSync(dir, { recursive: true, force: true });
   }
 }

@@ -15,6 +15,8 @@ const str = <T extends z.ZodTypeAny>(schema: T) => z.preprocess(unset, schema);
 export const BaseConfigSchema = z.object({
   ticket_prefix: list(['WCE-', 'PROJ-', 'JIRA-']),
   allowed_emails: list([]),
+  // Background sync of every BITBUCKET_REPOSITORY open PR when the MCP server starts.
+  auto_sync_on_start: bool(false),
   privacy: z.object({
     mode: str(z.enum(['strict', 'balanced', 'debug']).default('strict')),
     remove_author: bool(true),

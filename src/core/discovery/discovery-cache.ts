@@ -1,4 +1,6 @@
-import { DataStore } from '../storage/data.store.js';
+import fs from 'fs';
+import path from 'path';
+import { OutputReader } from '../output/output.reader.js';
 import { DiscoveredPR } from './pr-list.normalizer.js';
 import { normalizeUuid } from '../auth/current-user.resolver.js';
 
@@ -25,39 +27,23 @@ export class DiscoveryCache {
     return prMap ? Array.from(prMap.values()) : [];
   }
 
+  /**
+   * Local status without decrypting anything: a revision folder is named after the PR's source and
+   * target commits (rev_<src7>_<dst7>), so its existence says whether the current commits are synced.
+   */
   static evaluateCacheStatus(
     workspace: string,
     repoSlug: string,
     prId: number,
-    updatedOn: string,
+    _updatedOn: string,
     sourceCommitHash?: string,
     destinationCommitHash?: string
   ): 'Missing' | 'Cached' | 'Outdated' {
-    const active = DataStore.getActiveRevision(workspace, repoSlug, prId);
-    if (!active || !active.manifest) {
-      return 'Missing';
-    }
-
-    const current = active.current;
-
-    // Compare commit hashes if available
-    if (sourceCommitHash && destinationCommitHash) {
-      const srcMatch = current?.source_commit === sourceCommitHash || current?.source_hash === sourceCommitHash;
-      const dstMatch = current?.target_commit === destinationCommitHash || current?.destination_hash === destinationCommitHash;
-      if (srcMatch && dstMatch) {
-        return 'Cached';
-      }
-    }
-
-    // Check current generated_at timestamp vs updatedOn
-    const generatedTime = current?.generated_at ? new Date(current.generated_at).getTime() : 0;
-    const prUpdatedTime = new Date(updatedOn).getTime();
-
-    if (generatedTime >= prUpdatedTime) {
-      return 'Cached';
-    }
-
-    return 'Outdated';
+    const prDir = OutputReader.getPROutputDir(workspace, repoSlug, prId);
+    if (!fs.existsSync(path.join(prDir, 'current.json'))) return 'Missing';
+    if (!sourceCommitHash || !destinationCommitHash) return 'Outdated';
+    const revision = `rev_${sourceCommitHash.substring(0, 7)}_${destinationCommitHash.substring(0, 7)}`;
+    return fs.existsSync(path.join(prDir, 'revisions', revision)) ? 'Cached' : 'Outdated';
   }
 
   static clearScope(userUuid: string, workspace: string, repoSlug: string): void {

@@ -10,6 +10,9 @@ import { PIISanitizer } from '../core/privacy/pii.sanitizer.js';
 import { PathSanitizer } from '../core/privacy/path.sanitizer.js';
 import { ConfigManager } from '../config/config.manager.js';
 import { PRDiscoveryService } from '../core/discovery/pr-discovery.service.js';
+import { AccessGate } from '../core/auth/access-gate.js';
+import pLimit from 'p-limit';
+import { Logger } from '../utils/logger.js';
 
 export interface Page {
   text: string;
@@ -31,7 +34,8 @@ const NOT_SYNCED = 'PR is not synced yet. Call get_pr_context_pack for this pr_u
 
 /**
  * MCP-facing reads over the on-disk revision store (the single source of truth: no RAM cache).
- * Only getContextPack talks to Bitbucket; every other method reads local files.
+ * Every file there is encrypted, so each entry point first calls AccessGate.unlock (one Bitbucket
+ * request per repository per minute) before reading or writing.
  */
 export class PRContextService {
   private static inFlight = new Map<string, Promise<PRManifestV4>>();
@@ -46,9 +50,12 @@ export class PRContextService {
     const key = `${pr.workspace}:${pr.repoSlug}:${pr.prId}`;
     let task = this.inFlight.get(key);
     if (!task) {
-      task = collector
-        .collect(pr.workspace, pr.repoSlug, pr.prId)
-        .then(raw => DataStore.saveRevision(pr.workspace, pr.repoSlug, pr.prId, raw).manifest)
+      task = AccessGate.unlock(pr.workspace, pr.repoSlug)
+        .then(() => collector.collect(pr.workspace, pr.repoSlug, pr.prId))
+        .then(async raw => {
+          await AccessGate.unlock(pr.workspace, pr.repoSlug); // a long download may outlive the unlock TTL
+          return DataStore.saveRevision(pr.workspace, pr.repoSlug, pr.prId, raw).manifest;
+        })
         .finally(() => this.inFlight.delete(key));
       this.inFlight.set(key, task);
     }
@@ -57,15 +64,16 @@ export class PRContextService {
 
   /**
    * Re-syncs when there is no local revision, on refresh, or when the PR's source/target commits
-   * moved since the last sync. Returns a note when freshness could not be checked (offline).
+   * moved since the last sync. The note explains a cached answer when freshness could not be checked.
    */
-  static async ensureFresh(pr: ParsedPRUrl, refresh: boolean): Promise<string | null> {
-    // Built outside the try: missing credentials or ALLOWED_EMAILS denial must fail the call.
+  static async ensureFresh(pr: ParsedPRUrl, refresh: boolean): Promise<{ status: 'synced' | 'unchanged' | 'offline'; note: string | null }> {
+    // Outside the try: missing credentials, ALLOWED_EMAILS denial or no repository access must fail the call.
     const collector = new BitbucketCollector();
-    const active = OutputReader.getActiveRevision(pr.workspace, pr.repoSlug, pr.prId);
-    if (refresh || !active) {
+    await AccessGate.unlock(pr.workspace, pr.repoSlug);
+    const active = refresh ? null : OutputReader.getActiveRevision(pr.workspace, pr.repoSlug, pr.prId);
+    if (!active) {
       await this.sync(pr, collector);
-      return null;
+      return { status: 'synced', note: null };
     }
 
     let head: { source: string; destination: string };
@@ -73,17 +81,18 @@ export class PRContextService {
       head = await collector.getHeadCommits(pr.workspace, pr.repoSlug, pr.prId);
     } catch (err) {
       const reason = SecretScanner.scanAndRedact(err instanceof Error ? err.message : String(err));
-      return `Note: could not check Bitbucket for newer commits (${reason}); showing the revision synced at ${active.current.updated_at}.`;
+      return { status: 'offline', note: `Note: could not check Bitbucket for newer commits (${reason}); showing the revision synced at ${active.current.updated_at}.` };
     }
     if (head.source !== active.current.source_commit || head.destination !== active.current.target_commit) {
       await this.sync(pr, collector);
+      return { status: 'synced', note: null };
     }
-    return null;
+    return { status: 'unchanged', note: null };
   }
 
   static async getContextPack(prUrl: string, refresh: boolean, includeFileTable: boolean): Promise<string> {
     const pr = PRRegistry.parseAndValidateUrl(prUrl);
-    const note = await this.ensureFresh(pr, refresh);
+    const { note } = await this.ensureFresh(pr, refresh);
     const context = OutputReader.getContextPack(pr.workspace, pr.repoSlug, pr.prId);
     if (!context) throw new Error('Context pack generation failed: context.md was not written.');
 
@@ -92,27 +101,29 @@ export class PRContextService {
     return parts.filter(Boolean).join('\n\n---\n\n');
   }
 
-  private static requireSynced(prUrl: string): ParsedPRUrl {
+  /** Unlocks the PR's repository (live access check) and requires a local revision. */
+  private static async requireSynced(prUrl: string): Promise<ParsedPRUrl> {
     const pr = PRRegistry.parseAndValidateUrl(prUrl);
+    await AccessGate.unlock(pr.workspace, pr.repoSlug);
     if (!OutputReader.getActiveRevision(pr.workspace, pr.repoSlug, pr.prId)) throw new Error(NOT_SYNCED);
     return pr;
   }
 
-  static getFileContext(prUrl: string, fileId: string | number, offset: number, maxChars: number): Page {
-    const pr = this.requireSynced(prUrl);
+  static async getFileContext(prUrl: string, fileId: string | number, offset: number, maxChars: number): Promise<Page> {
+    const pr = await this.requireSynced(prUrl);
     const text = OutputReader.getFileContext(pr.workspace, pr.repoSlug, pr.prId, fileId);
     if (!text) throw new Error(`No file ${OutputReader.normalizeFileId(fileId)} in this PR. Use search_pr_files to list file ids.`);
     return this.page(text, offset, maxChars);
   }
 
-  static getFileChange(
+  static async getFileChange(
     prUrl: string,
     fileId: string | number,
     includePatch: boolean,
     offset: number,
     maxChars: number
-  ): { change: FileChangeV4; patch?: Page } {
-    const pr = this.requireSynced(prUrl);
+  ): Promise<{ change: FileChangeV4; patch?: Page }> {
+    const pr = await this.requireSynced(prUrl);
     const detail = OutputReader.getFileChange(pr.workspace, pr.repoSlug, pr.prId, fileId);
     if (!detail) throw new Error(`No file ${OutputReader.normalizeFileId(fileId)} in this PR. Use search_pr_files to list file ids.`);
     return {
@@ -121,8 +132,8 @@ export class PRContextService {
     };
   }
 
-  static searchPRFiles(prUrl: string, filters: FileFilters): { total: number; files: FileIndexEntryV4[] } {
-    const pr = this.requireSynced(prUrl);
+  static async searchPRFiles(prUrl: string, filters: FileFilters): Promise<{ total: number; files: FileIndexEntryV4[] }> {
+    const pr = await this.requireSynced(prUrl);
     const eq = (a: string, b?: string) => !b || a.toLowerCase() === b.toLowerCase();
     const files = OutputReader.getFileIndex(pr.workspace, pr.repoSlug, pr.prId).filter(f =>
       (!filters.path || f.path.toLowerCase().includes(filters.path.toLowerCase())) &&
@@ -141,6 +152,7 @@ export class PRContextService {
   static async getComments(prUrl: string, opts: { offset: number; limit: number; include_resolved: boolean }) {
     const pr = PRRegistry.parseAndValidateUrl(prUrl);
     const res = await new BitbucketCollector().getComments(pr.workspace, pr.repoSlug, pr.prId);
+    await AccessGate.unlock(pr.workspace, pr.repoSlug); // to map inline comments onto the encrypted file index
     const { privacy } = ConfigManager.loadBase();
 
     const idByPath = new Map<string, string>();
@@ -199,8 +211,47 @@ export class PRContextService {
     return { total: prs.length, prs };
   }
 
-  static getSyncStatus(prUrl: string): object {
+  /**
+   * Syncs every open PR of the account (one repository or every BITBUCKET_REPOSITORY entry).
+   * Unchanged PRs cost one metadata request; one failing PR never stops the batch.
+   */
+  static async syncMyOpenPRs(repository?: string, force = false) {
+    const { prs } = await this.listMyOpenPRs(repository);
+    const limit = pLimit(3);
+    const results = await Promise.all(prs.map(p => limit(async () => {
+      const pr = PRRegistry.parseAndValidateUrl(p.pr_url);
+      try {
+        const { status } = await this.ensureFresh(pr, force);
+        const manifest = OutputReader.getActiveRevision(pr.workspace, pr.repoSlug, pr.prId)?.manifest;
+        return {
+          pr_url: p.pr_url, id: p.id, title: p.title, status,
+          ticket: manifest?.ticket_id ?? null,
+          overall_risk: manifest?.risk_summary.overall_level ?? null,
+          files_changed: manifest?.stats.files_changed ?? null,
+          updated_on: p.updated_on
+        };
+      } catch (err) {
+        return { pr_url: p.pr_url, id: p.id, title: p.title, status: 'failed' as const, updated_on: p.updated_on,
+          error: SecretScanner.scanAndRedact(err instanceof Error ? err.message : String(err)) };
+      }
+    })));
+    const count = (status: string) => results.filter(r => r.status === status).length;
+    return { total: results.length, synced: count('synced'), unchanged: count('unchanged'), failed: count('failed'), prs: results };
+  }
+
+  /** AUTO_SYNC_ON_START: background sync after the server starts. Never throws; results go to the log. */
+  static async autoSync(): Promise<void> {
+    try {
+      const r = await this.syncMyOpenPRs();
+      Logger.info(`auto_sync done total=${r.total} synced=${r.synced} unchanged=${r.unchanged} failed=${r.failed}`);
+    } catch (err) {
+      Logger.warn(`auto_sync failed type=${err instanceof Error ? err.name : typeof err}`, err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  static async getSyncStatus(prUrl: string): Promise<object> {
     const pr = PRRegistry.parseAndValidateUrl(prUrl);
+    await AccessGate.unlock(pr.workspace, pr.repoSlug);
     const active = OutputReader.getActiveRevision(pr.workspace, pr.repoSlug, pr.prId);
     if (!active) return { synced: false };
     const { active_revision, updated_at, source_commit, target_commit, ai_reading_mode } = active.current as any;

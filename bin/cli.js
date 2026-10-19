@@ -7,7 +7,7 @@
 // Only Node built-ins are used so this runs on a fresh clone. Every message goes to stderr:
 // stdout belongs to the MCP JSON-RPC stream when running the server.
 //
-// Usage: node bin/cli.js [server|cmd|generate-all|check|prepare]   (default: server)
+// Usage: node bin/cli.js [server|cmd|generate-all|purge-plaintext|check|prepare]   (default: server)
 import { spawn, spawnSync } from 'child_process';
 import crypto from 'crypto';
 import fs from 'fs';
@@ -20,7 +20,8 @@ const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf-8')
 const ENTRIES = {
   server: 'dist/mcp/server.js',
   cmd: 'dist/cmd/cmd.runner.js',
-  'generate-all': 'dist/cmd/generate-all.runner.js'
+  'generate-all': 'dist/cmd/generate-all.runner.js',
+  'purge-plaintext': 'dist/cmd/purge-plaintext.runner.js'
 };
 const CREDENTIALS = ['BITBUCKET_EMAIL', 'BITBUCKET_API_TOKEN'];
 const REQUIRED_ENV = {

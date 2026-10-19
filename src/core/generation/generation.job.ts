@@ -1,4 +1,5 @@
 import { BitbucketCollector } from '../bitbucket/bitbucket.collector.js';
+import { AccessGate } from '../auth/access-gate.js';
 import { DataStore } from '../storage/data.store.js';
 import { PRGenerationJobState, GenerationStage } from './generation.types.js';
 
@@ -31,6 +32,7 @@ export class GenerationJob {
 
     try {
       const collector = new BitbucketCollector(email, token);
+      await AccessGate.unlock(workspace, repoSlug); // the local cache is encrypted
 
       // Unless forced, skip PRs whose stored revision still matches the PR's head commits.
       const active = forceRefresh ? null : DataStore.getActiveRevision(workspace, repoSlug, prId);
