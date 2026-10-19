@@ -30,7 +30,7 @@ This repository is built almost entirely by AI agents. Any agent that edits it (
 
   | You changed | Also update |
   |---|---|
-  | A tool's name, parameters or behaviour | `INSTRUCTIONS` in `src/mcp/tools.ts`, §4 below, the README tool table, and `../mcp-hub/docs/mcps/mcp-pr-companion.md` if the hub contract changes |
+  | A tool's name, parameters or behaviour | `INSTRUCTIONS` in `src/mcp/tools.ts`, §4 below, the README tool table, `docs/HUB_INTEGRATION.md` §3, and `../mcp-hub/docs/mcps/mcp-pr-companion.md` (plus `../mcp-hub/scripts/smoke.py` if `check_bitbucket_connection` changes). Follow `../mcp-hub/docs/child-mcp-compatibility.md`. |
   | An env variable | `.env.example`, the README config table |
   | A dependency | `docs/DEPENDENCIES.md` |
   | The pipeline or the on-disk layout | `docs/ARCHITECTURE.md` |
@@ -61,7 +61,7 @@ This repository is built almost entirely by AI agents. Any agent that edits it (
 
 ## 4. MCP tools reference
 
-All tools take `pr_url` (`https://bitbucket.org/{workspace}/{repo}/pull-requests/{id}`). Only `get_pr_context_pack` contacts Bitbucket. The others read the local revision and fail with `Error: PR is not synced yet…` until it has run.
+The PR tools take `pr_url` (`https://bitbucket.org/{workspace}/{repo}/pull-requests/{id}`). Only `get_pr_context_pack` and `check_bitbucket_connection` contact Bitbucket. The file tools read the local revision and fail with `Error: PR is not synced yet…` until `get_pr_context_pack` has run.
 
 | Tool | Parameters (defaults) | Returns | Annotations |
 |---|---|---|---|
@@ -70,6 +70,7 @@ All tools take `pr_url` (`https://bitbucket.org/{workspace}/{repo}/pull-requests
 | `get_pr_file_context` | `file_id`, `offset` (0), `max_chars` (16000) | Markdown for one file plus a sanitized diff page. Ends with `continue with offset N.` when there is more. | read-only · local |
 | `get_pr_file_changes` | `file_id`, `include_patch` (true), `offset`, `max_chars` | JSON `{change, patch?: {text, total_chars, next_offset}}` | read-only · local |
 | `get_pr_sync_status` | none | JSON `{synced, revision, updated_at, source_commit, target_commit, ai_reading_mode, stats}` | read-only · local |
+| `check_bitbucket_connection` | none (no `pr_url`) | JSON `{connected: true}`, or an error naming the cause (HTTP 401 credentials, 403 missing `read:user`, unreachable, `ALLOWED_EMAILS`). The hub smoke check uses it. | read-only · open world |
 
 **Freshness:** `get_pr_context_pack` makes one metadata request. If the PR's source or target commit differs from `current.json`, it re-syncs. `refresh=true` forces a re-sync. Concurrent syncs of one PR share a single fetch.
 
@@ -81,7 +82,7 @@ All tools take `pr_url` (`https://bitbucket.org/{workspace}/{repo}/pull-requests
 
 1. Add the logic as a static method on `PRContextService` (or reuse `OutputReader`). Page any text that can grow.
 2. Register it in `createServer()` with zod fields (reuse `prUrl`, `fileId`, `offset`, `maxChars`) and annotations.
-3. Add cases to `tests/server.test.ts`, update the expected tool list in `tests/stdio.test.ts`, then update the docs listed in the §2 map.
+3. Add cases to `tests/server.test.ts`, update the expected tool list in `tests/stdio.test.ts`, then update the docs listed in the §2 map. The hub needs the new tool in its `hub.json` allowlist before agents can see it.
 
 ## 5. Testing
 

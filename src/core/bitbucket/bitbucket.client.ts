@@ -29,6 +29,11 @@ export class BitbucketClient {
     return PaginationHelper.fetchAllPages(url, this.headers, options);
   }
 
+  /** The authenticated account (needs read:user). Used as a credentials check. */
+  async getCurrentUser(options: BitbucketFetchOptions = {}): Promise<any> {
+    return this.fetchJson('https://api.bitbucket.org/2.0/user', options);
+  }
+
   /** Every page of a pull request listing (q is a Bitbucket query, e.g. state="OPEN"), newest first. */
   async listPullRequests(workspace: string, repoSlug: string, q: string, options: BitbucketFetchOptions = {}): Promise<PaginatedResult<any>> {
     const url = `https://api.bitbucket.org/2.0/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/pullrequests?q=${encodeURIComponent(q)}&sort=-updated_on&pagelen=50`;
