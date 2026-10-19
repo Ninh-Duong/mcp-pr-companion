@@ -40,6 +40,7 @@
 | PR comments | Same as PR text (`PIISanitizer` + `SecretScanner`). Author only when `PRIVACY_REMOVE_AUTHOR=false`. Inline paths per `PRIVACY_FILE_PATH_MODE` (omitted in `opaque`). Deleted comments dropped. | `PRContextService.getComments` |
 | CLI logs | Additionally strip emails, UUIDs and `workspace/repo` | `LogRedactor` |
 | Credentials | Exist only in env and memory. Never written to disk, logged or echoed. | `ConfigManager`, `bin/cli.js` |
+| Everything under `ai-context/` | Encrypted at rest (`PRC1`, AES-256-GCM). Readable only after `AccessGate.unlock()`. The repository UUID (key material) is never logged, returned or written. Only names stay plaintext: never put content in a file or folder name. | `secure-file.ts`, `access-gate.ts`, [ENCRYPTION.md](ENCRYPTION.md) |
 
 When you add a new field to the output, decide which row applies **before** writing the code.
 
