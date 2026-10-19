@@ -125,6 +125,7 @@ Các tool AI có thể gọi (qua mcp-hub tên sẽ có tiền tố `pr__`, vd `
 | `get_pr_file_context` | Xem chi tiết + diff của 1 file (vd `file_0001`), chia trang bằng `offset` / `max_chars` |
 | `get_pr_file_changes` | Phân loại, rủi ro, symbol của 1 file dạng JSON (kèm 1 trang diff) |
 | `get_pr_sync_status` | Xem PR đã có dữ liệu ở máy chưa (không gọi Bitbucket) |
+| `check_bitbucket_connection` | Kiểm tra email/token trong `.env` có kết nối được Bitbucket không |
 
 Muốn dùng qua **mcp-hub** (một MCP gom nhiều MCP con): xem [docs/HUB_INTEGRATION.md](docs/HUB_INTEGRATION.md).
 

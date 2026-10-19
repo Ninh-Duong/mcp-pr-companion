@@ -21,10 +21,14 @@ const diffText = (n: number) =>
   `diff --git a/${REAL_PATH} b/${REAL_PATH}\nindex 111..222 100644\n--- a/${REAL_PATH}\n+++ b/${REAL_PATH}\n@@ -1,1 +1,${n} @@\n${bigBody}\n`;
 
 let sourceHash = 'aaaaaaaaaaaa';
+let userStatus = 200;
 const calls: Record<string, number> = { metadata: 0, diff: 0 };
 globalThis.fetch = (async (input: string | URL) => {
   const url = String(input);
   const ok = (body: unknown) => new Response(typeof body === 'string' ? body : JSON.stringify(body), { status: 200 });
+  if (url.endsWith('/2.0/user')) {
+    return userStatus === 200 ? ok({ uuid: '{u}', display_name: 'Dev' }) : new Response('{}', { status: userStatus, statusText: 'Unauthorized' });
+  }
   if (url.endsWith('/pullrequests/7')) {
     calls.metadata++;
     return ok({
@@ -126,11 +130,22 @@ const badId = await call('get_pr_file_context', { pr_url: PR_URL, file_id: '../.
 assert.ok(badId.isError && /Invalid file_id/.test(badId.text));
 console.log('  ✓ invalid input returns isError "Error: …"');
 
-// 11. ALLOWED_EMAILS is enforced on the MCP path
+// 11. Health check: success payload, and a clear error on bad credentials (no PII in either)
+const health = await call('check_bitbucket_connection', {});
+assert.ok(!health.isError);
+assert.deepEqual(JSON.parse(health.text), { connected: true });
+userStatus = 401;
+const unauth = await call('check_bitbucket_connection', {});
+assert.ok(unauth.isError && /HTTP 401/.test(unauth.text) && !unauth.text.includes('dev@example.com'));
+userStatus = 200;
+console.log('  ✓ check_bitbucket_connection reports success and auth failures');
+
+// 12. ALLOWED_EMAILS is enforced on the MCP path
 process.env.ALLOWED_EMAILS = 'someone-else@example.com';
 (ConfigManager as any).cached = null;
 const denied = await call('get_pr_context_pack', { pr_url: PR_URL });
 assert.ok(denied.isError && /ALLOWED_EMAILS/.test(denied.text));
+assert.ok((await call('check_bitbucket_connection', {})).isError, 'the health check is denied too');
 console.log('  ✓ ALLOWED_EMAILS denies other accounts');
 
 await client.close();

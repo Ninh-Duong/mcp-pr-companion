@@ -1,6 +1,6 @@
 # Running under mcp-hub
 
-[mcp-hub](../../mcp-hub) launches this repository as a local stdio child and exposes an allowlisted set of its tools to AI clients. The hub-side contract is `../mcp-hub/docs/mcps/mcp-pr-companion.md`; the hub's own runbook is `../mcp-hub/docs/adding-a-child-mcp.md`.
+[mcp-hub](../../mcp-hub) launches this repository as a local stdio child and exposes an allowlisted set of its tools to AI clients. The hub-side contract is `../mcp-hub/docs/mcps/mcp-pr-companion.md`. The shared rules every child must follow are in `../mcp-hub/docs/child-mcp-compatibility.md`, and the onboarding runbook is `../mcp-hub/docs/adding-a-child-mcp.md`.
 
 ## 1. Requirements
 
@@ -42,7 +42,8 @@ Copy the hub template `config/mcps/mcp-pr-companion.example.json`:
       { "server": "mcp-pr-companion", "name": "search_pr_files", "exposeAs": "pr__search_pr_files" },
       { "server": "mcp-pr-companion", "name": "get_pr_file_context", "exposeAs": "pr__get_pr_file_context" },
       { "server": "mcp-pr-companion", "name": "get_pr_file_changes", "exposeAs": "pr__get_pr_file_changes" },
-      { "server": "mcp-pr-companion", "name": "get_pr_sync_status", "exposeAs": "pr__get_pr_sync_status" }
+      { "server": "mcp-pr-companion", "name": "get_pr_sync_status", "exposeAs": "pr__get_pr_sync_status" },
+      { "server": "mcp-pr-companion", "name": "check_bitbucket_connection", "exposeAs": "pr__check_bitbucket_connection" }
     ]
   }
 }
@@ -59,7 +60,8 @@ Both entries start `enabled: false`. Set both to `true` once `.env` is filled an
 | Forwards tool schemas and annotations unchanged | zod `inputSchema` and annotations on every tool |
 | Prefixes tools with `pr__` | Child tool names have no prefix |
 | Serves the contract file as a prompt and passes on server instructions | `INSTRUCTIONS` stays short and generic |
-| Applies a per-call timeout | Only `get_pr_context_pack` does network I/O; file tools are local reads |
+| Applies a per-call timeout | Only `get_pr_context_pack` and `check_bitbucket_connection` do network I/O; file tools are local reads |
+| Needs a read-only upstream health check for `scripts/smoke.py` (`docs/child-mcp-compatibility.md`) | `check_bitbucket_connection` returns `{"connected": true}` only when the token authenticates |
 
 Renaming a tool, changing its parameters or moving the log path requires updating the hub's `hub.json` allowlist (the user does this), `docs/mcps/mcp-pr-companion.md` and `scripts/smoke.py` in the same change.
 

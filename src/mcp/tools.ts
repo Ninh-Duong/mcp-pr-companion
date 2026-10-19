@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { PRContextService, Page } from './context.service.js';
 import { Logger } from '../utils/logger.js';
 import { SecretScanner } from '../core/privacy/secret.scanner.js';
+import { BitbucketCollector } from '../core/bitbucket/bitbucket.collector.js';
 
 const { version } = JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf-8'));
 
@@ -13,7 +14,8 @@ Workflow:
 2. search_pr_files(pr_url, filters) to list file ids by path, language, status, change_kind or risk_tag.
 3. get_pr_file_context(pr_url, file_id) for one file's summary and diff, or get_pr_file_changes(pr_url, file_id) for classification, risk evidence and symbols as JSON.
 Long text is paged: when next_offset is not null (or the text ends with "continue with offset N"), call again with that offset.
-File paths are sanitized by design; filter on what search_pr_files returns. Tools never write to Bitbucket.`;
+File paths are sanitized by design; filter on what search_pr_files returns. Tools never write to Bitbucket.
+check_bitbucket_connection verifies the credentials when a call fails with an auth error.`;
 
 const prUrl = z.string().min(1).describe('Full Bitbucket Cloud PR URL: https://bitbucket.org/{workspace}/{repo}/pull-requests/{id}');
 const fileId = z.union([z.string(), z.number().int().nonnegative()]).describe('File id from the context pack or search_pr_files, e.g. "file_0001" (a number such as 1 also works).');
@@ -106,6 +108,22 @@ export function createServer(): McpServer {
     },
     ({ pr_url, file_id, include_patch, offset, max_chars }) =>
       run('get_pr_file_changes', () => json(PRContextService.getFileChange(pr_url, file_id, include_patch, offset, max_chars)))
+  );
+
+  server.registerTool(
+    'check_bitbucket_connection',
+    {
+      title: 'Check Bitbucket connection',
+      description:
+        'Health check: verifies that the configured Bitbucket credentials authenticate (and pass ALLOWED_EMAILS) with one read-only request. Returns JSON {connected: true}; failures are errors. Changes nothing.',
+      inputSchema: {},
+      annotations: { readOnlyHint: true, openWorldHint: true }
+    },
+    () =>
+      run('check_bitbucket_connection', async () => {
+        await new BitbucketCollector().checkConnection();
+        return json({ connected: true });
+      })
   );
 
   server.registerTool(
