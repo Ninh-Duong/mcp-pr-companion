@@ -1,4 +1,4 @@
-import { Redactor } from '../src/utils/redactor.js';
+import { SecretScanner } from '../src/core/privacy/secret.scanner.js';
 import path from 'path';
 import { PRRegistry } from '../src/core/registry/pr.registry.js';
 import { DiffParser } from '../src/core/analyzer/diff.parser.js';
@@ -27,15 +27,12 @@ async function runTests() {
   console.log('            Running Unit & Integration Tests (Schema v4)        ');
   console.log('================================================================\n');
 
-  // 1. Redactor Tests
-  console.log('1. Redactor & Secret Masking:');
+  // 1. Redaction Tests
+  console.log('1. Secret Redaction:');
   const token = 'ATBB1234567890abcdef';
-  const masked = Redactor.maskToken(token);
-  assert(masked === 'ATBB****cdef', 'Redactor.maskToken masks token with ATBB****suffix format');
-
   const rawLog = `Connecting with Authorization: Basic dXNlcjp0b2tlbg== and token "token": "${token}"`;
-  const redacted = Redactor.redact(rawLog);
-  assert(!redacted.includes(token) || redacted.includes('ATBB****cdef'), 'Redactor sanitizes tokens from log text');
+  const redacted = SecretScanner.scanAndRedact(rawLog);
+  assert(!redacted.includes(token) && !redacted.includes('dXNlcjp0b2tlbg'), 'SecretScanner removes tokens and auth headers from log text');
 
   // 2. PRRegistry Tests
   console.log('\n2. PRRegistry & URL Canonicalization:');
@@ -43,9 +40,9 @@ async function runTests() {
   const parsed = PRRegistry.parseAndValidateUrl(validUrl);
   assert(parsed.workspace === 'myworkspace' && parsed.repoSlug === 'myrepo' && parsed.prId === 4158, 'parseAndValidateUrl extracts workspace, repo, and prId');
 
-  const dotRepoUrl = 'https://bitbucket.org/siliconstack/wec.be/pull-requests/4565';
+  const dotRepoUrl = 'https://bitbucket.org/acme/demo.api/pull-requests/4565';
   const dotParsed = PRRegistry.parseAndValidateUrl(dotRepoUrl);
-  assert(dotParsed.repoSlug === 'wec.be' && dotParsed.prId === 4565, 'parseAndValidateUrl accepts repository names containing dots (wec.be)');
+  assert(dotParsed.repoSlug === 'demo.api' && dotParsed.prId === 4565, 'parseAndValidateUrl accepts repository names containing dots (demo.api)');
 
   // 3. DiffParser Tests
   console.log('\n3. DiffParser Multi-File Parsing:');

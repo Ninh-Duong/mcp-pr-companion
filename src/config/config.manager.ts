@@ -28,8 +28,7 @@ export class ConfigManager {
       },
       ai_context: {
         root: env.AI_CONTEXT_ROOT,
-        company: env.AI_CONTEXT_COMPANY,
-        app: env.AI_CONTEXT_APP
+        company: env.AI_CONTEXT_COMPANY
       }
     });
     return this.cached;
@@ -37,7 +36,7 @@ export class ConfigManager {
 
   /**
    * BITBUCKET_REPOSITORY accepts a comma-separated list. Entries without a "/" are
-   * prefixed with BITBUCKET_WORKSPACE, e.g. WORKSPACE=siliconstack + "wec.be,wec.database".
+   * prefixed with BITBUCKET_WORKSPACE, e.g. WORKSPACE=acme + "demo.api,demo.db".
    */
   static credentials(): EnvCredentials {
     const env = process.env;

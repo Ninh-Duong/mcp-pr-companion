@@ -1,6 +1,6 @@
 import { ApiTokenAuth } from '../auth/api-token.auth.js';
 import { PaginationHelper, PaginatedResult } from './pagination.js';
-import { Redactor } from '../../utils/redactor.js';
+import { SecretScanner } from '../privacy/secret.scanner.js';
 
 export interface BitbucketFetchOptions {
   timeoutMs?: number;
@@ -54,7 +54,7 @@ export class BitbucketClient {
       return await res.text();
     } catch (err: any) {
       clearTimeout(timeoutId);
-      throw new Error(`Failed to download PR diff: ${Redactor.redact(err.message || String(err))}`);
+      throw new Error(`Failed to download PR diff: ${SecretScanner.scanAndRedact(err.message || String(err))}`);
     }
   }
 
@@ -72,7 +72,7 @@ export class BitbucketClient {
 
       if (!res.ok) {
         const errBody = await res.text();
-        const redactedErr = Redactor.redact(errBody);
+        const redactedErr = SecretScanner.scanAndRedact(errBody);
         const err: any = new Error(`HTTP ${res.status}: ${res.statusText}`);
         err.status = res.status;
         err.body = redactedErr;

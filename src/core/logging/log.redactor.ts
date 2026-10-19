@@ -1,20 +1,17 @@
 import { OpaqueIDGenerator } from '../storage/opaque.id.js';
+import { SecretScanner } from '../privacy/secret.scanner.js';
 
+/** Log-line redaction: SecretScanner's secret patterns plus personal data (emails, UUIDs) and repo identity. */
 export class LogRedactor {
   private static emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
   private static uuidRegex = /\{?[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\}?/g;
-  private static bearerRegex = /Bearer\s+[A-Za-z0-9\-\._~\+\/]+=*/gi;
-  private static basicAuthRegex = /Basic\s+[A-Za-z0-9\+\/]+=*/gi;
-  private static bitbucketTokenRegex = /(?:ATBB|ATATT)[a-zA-Z0-9_\-=]+/g;
+  // Bare "Bearer x" / "Basic x" without an Authorization: prefix (SecretScanner only matches the header form).
+  private static bareAuthRegex = /\b(Bearer|Basic)\s+[A-Za-z0-9\-._~+\/]{8,}=*/gi;
 
   static redactString(text: string, workspace?: string, repoSlug?: string): string {
     if (!text) return text;
-    let redacted = text;
-
-    // Redact tokens & auth headers
-    redacted = redacted.replace(this.bearerRegex, 'Bearer [REDACTED_TOKEN]');
-    redacted = redacted.replace(this.basicAuthRegex, 'Basic [REDACTED_BASIC_AUTH]');
-    redacted = redacted.replace(this.bitbucketTokenRegex, '[REDACTED_TOKEN]');
+    let redacted = SecretScanner.scanAndRedact(text);
+    redacted = redacted.replace(this.bareAuthRegex, '$1 [REDACTED]');
 
     // Redact emails & UUIDs
     redacted = redacted.replace(this.emailRegex, '[REDACTED_EMAIL]');

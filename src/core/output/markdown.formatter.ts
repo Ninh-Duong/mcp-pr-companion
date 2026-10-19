@@ -2,37 +2,31 @@ import { PRManifestV4 } from './schema/manifest.v4.schema.js';
 import { FileIndexEntryV4 } from './schema/file_index.v4.schema.js';
 import { FileChangeV4 } from './schema/file_change.v4.schema.js';
 import { PRCoverageV4 } from './schema/coverage.v4.schema.js';
+import { AIReadingMetadata } from '../analyzer/context-mode.classifier.js';
+import path from 'path';
 
 export class MarkdownFormatter {
   static formatContextPack(
-    company: string,
-    appName: string,
-    featureName: string,
-    folderName: string,
-    workspace: string,
-    repoSlug: string,
+    repository: string,
     manifest: PRManifestV4,
-    fileEntries: FileIndexEntryV4[],
-    fileChangesMap: Map<string, { change: FileChangeV4; diffContent: string }>,
     commitsJsonl: string[],
-    coverageData: PRCoverageV4,
-    aiReading: { mode: string; priority_file_ids?: string[]; reason?: string }
+    aiReading: AIReadingMetadata
   ): string {
     const lines: string[] = [];
+    // Classifier entries are "files/file_0001.md"; agents pass the bare id to the file tools.
+    const ids = (refs: string[]) => refs.map(r => path.basename(r, '.md')).join(', ');
 
     lines.push(`# PR Context Pack: ${manifest.title}`);
     lines.push('');
     lines.push('## Read Strategy');
-    lines.push(`Mode: ${aiReading.mode}`);
-    if (aiReading.reason) {
-      lines.push(`Reason: ${aiReading.reason}`);
-    }
-    if (aiReading.priority_file_ids && aiReading.priority_file_ids.length > 0) {
-      lines.push(`Priority File IDs: ${aiReading.priority_file_ids.join(', ')}`);
-    }
+    lines.push(`Mode: ${aiReading.mode} (token budget: ${aiReading.token_budget})`);
+    lines.push(`Reason: ${aiReading.reason}`);
+    if (aiReading.required_next_files.length > 0) lines.push(`Read next: ${ids(aiReading.required_next_files)}`);
+    if (aiReading.optional_next_files.length > 0) lines.push(`Optional: ${ids(aiReading.optional_next_files)}`);
+    if (aiReading.skip_categories.length > 0) lines.push(`Skip: ${aiReading.skip_categories.join(', ')}`);
     lines.push('');
     lines.push('## Overview');
-    lines.push(`- **Repository**: ${workspace}/${repoSlug}`);
+    lines.push(`- **Repository**: ${repository}`);
     lines.push(`- **Branches**: \`${manifest.source_branch}\` -> \`${manifest.target_branch}\``);
     lines.push(`- **State**: ${manifest.state}`);
     lines.push(`- **Ticket**: ${manifest.ticket_id || 'N/A'}`);
@@ -86,17 +80,12 @@ export class MarkdownFormatter {
     return lines.join('\n');
   }
 
-  static formatActionsSummary(
-    coverageData: PRCoverageV4,
-    status: string = 'complete',
-    provider: string = 'bitbucket'
-  ): string {
+  static formatActionsSummary(coverageData: PRCoverageV4): string {
     const lines: string[] = [];
 
     lines.push('# Actions & Coverage');
     lines.push('');
-    lines.push(`- **Provider**: ${provider}`);
-    lines.push(`- **Collection Status**: ${status}`);
+    lines.push('- **Provider**: bitbucket');
     lines.push('');
     lines.push('## Coverage Overview');
 

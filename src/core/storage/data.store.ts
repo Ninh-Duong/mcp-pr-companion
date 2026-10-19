@@ -24,10 +24,6 @@ export class DataStore {
     return OutputReader.getActiveRevision(workspace, repoSlug, prId);
   }
 
-  static getFileDetail(workspace: string, repoSlug: string, prId: number, fileId: string | number) {
-    return OutputReader.getFileChange(workspace, repoSlug, prId, fileId);
-  }
-
   /**
    * Generates Agent-Optimized Output Schema v4 from a raw Bitbucket revision.
    */
@@ -136,8 +132,12 @@ export class DataStore {
         detail_ref: `files/${fileIdStr}/change.json`
       });
 
-      // Construct file patch.diff text
-      let patchDiff = matchedDiff.headerLines.join('\n') + '\n';
+      // Construct file patch.diff text. Header lines ("diff --git a/<path>", "--- a/<path>") carry the
+      // real paths: rewrite them to the sanitized form so file_path_mode holds for patches too.
+      const pathPairs: Array<[string, string]> = [[originalPath, sanitizedPath]];
+      if (item.old_path && item.old_path !== originalPath) pathPairs.push([item.old_path, PathSanitizer.sanitize(item.old_path, privacy.file_path_mode, fileIdStr)]);
+      const headerLines = matchedDiff.headerLines.map(line => pathPairs.reduce((l, [real, safe]) => l.split(real).join(safe), line));
+      let patchDiff = headerLines.join('\n') + '\n';
       for (const hunk of matchedDiff.hunks) {
         patchDiff += hunk.header + '\n';
         for (const line of hunk.lines) {
@@ -216,7 +216,7 @@ export class DataStore {
       title: sanitizedTitle,
       description: sanitizedDesc,
       state: projectedMeta.state || 'OPEN',
-      is_draft: false,
+      is_draft: Boolean(projectedMeta.draft),
       source_branch: projectedMeta.source.branch.name,
       target_branch: projectedMeta.destination.branch.name,
       source_commit: rawRev.sourceHash,
@@ -264,7 +264,6 @@ export class DataStore {
       fileChangesMap,
       commitsJsonl,
       coverageData,
-      config.ai_context.app,
       config.ai_context.company,
       config.ai_context.root
     );

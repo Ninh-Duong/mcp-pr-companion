@@ -1,5 +1,5 @@
 import { PIISanitizer } from '../privacy/pii.sanitizer.js';
-import { Redactor } from '../../utils/redactor.js';
+import { SecretScanner } from '../privacy/secret.scanner.js';
 import { normalizeUuid } from '../auth/current-user.resolver.js';
 
 export interface DiscoveredPR {
@@ -18,7 +18,7 @@ export interface DiscoveredPR {
 
 export class PRListNormalizer {
   static normalizePR(rawPr: any, cacheStatus: 'Missing' | 'Cached' | 'Outdated'): DiscoveredPR {
-    const title = rawPr.title ? Redactor.redact(PIISanitizer.sanitizeText(rawPr.title)) : 'Untitled PR';
+    const title = rawPr.title ? SecretScanner.scanAndRedact(PIISanitizer.sanitizeText(rawPr.title)) : 'Untitled PR';
     const sourceBranch = rawPr.source?.branch?.name || 'unknown';
     const targetBranch = rawPr.destination?.branch?.name || 'unknown';
     const sourceCommitHash = rawPr.source?.commit?.hash;

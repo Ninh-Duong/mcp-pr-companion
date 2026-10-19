@@ -23,8 +23,7 @@ export const BaseConfigSchema = z.object({
   }),
   ai_context: z.object({
     root: str(z.string().default('ai-context')),
-    company: str(z.string().default('siliconstack')),
-    app: str(z.string().default('bitbucket'))
+    company: str(z.string().default(''))
   })
 });
 

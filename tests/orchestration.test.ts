@@ -30,10 +30,10 @@ async function runOrchestrationTests() {
 
   // Repository list: bare slugs get BITBUCKET_WORKSPACE, full "ws/repo" kept, duplicates dropped
   Object.assign(process.env, {
-    BITBUCKET_WORKSPACE: 'siliconstack',
-    BITBUCKET_REPOSITORY: 'wec.be, wec.database ,other-ws/tool,wec.be,'
+    BITBUCKET_WORKSPACE: 'acme',
+    BITBUCKET_REPOSITORY: 'demo.api, demo.db ,other-ws/tool,demo.api,'
   });
-  assert.deepStrictEqual(ConfigManager.credentials().repositories, ['siliconstack/wec.be', 'siliconstack/wec.database', 'other-ws/tool']);
+  assert.deepStrictEqual(ConfigManager.credentials().repositories, ['acme/demo.api', 'acme/demo.db', 'other-ws/tool']);
   const config = ConfigManager.loadBase();
   assert.deepStrictEqual(config.allowed_emails, ['a.user@example.com', 'b.user@example.com']);
   assert.deepStrictEqual(config.ticket_prefix, ['ABC-', 'XYZ-']);
@@ -41,7 +41,7 @@ async function runOrchestrationTests() {
   assert.strictEqual(config.privacy.max_commit_subjects, 5);
   assert.strictEqual(config.privacy.mode, 'strict', 'Empty env value falls back to default');
   assert.strictEqual(config.ai_context.root, 'out');
-  assert.strictEqual(config.ai_context.company, 'siliconstack', 'Unset env value falls back to default');
+  assert.strictEqual(config.ai_context.company, '', 'Unset env value falls back to default');
   console.log('  ✓ Credentials, lists, booleans, numbers and defaults parse correctly');
 
   console.log('\n================================================================');

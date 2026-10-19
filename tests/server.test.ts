@@ -1,0 +1,136 @@
+// Drives the real McpServer through an in-memory MCP client against a fake Bitbucket (globalThis.fetch),
+// so zod defaults, validation and error shaping run exactly as in production. Runs in a temp cwd (tests/run.mjs).
+import assert from 'node:assert/strict';
+import fs from 'fs';
+import path from 'path';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+
+process.env.BITBUCKET_EMAIL = 'dev@example.com';
+process.env.BITBUCKET_API_TOKEN = 'test-token';
+process.env.AI_CONTEXT_COMPANY = 'acme';
+process.env.PRIVACY_FILE_PATH_MODE = 'sanitized';
+
+const { createServer } = await import('../src/mcp/tools.ts');
+const { ConfigManager } = await import('../src/config/config.manager.ts');
+
+const PR_URL = 'https://bitbucket.org/acme/demo-repo/pull-requests/7';
+const REAL_PATH = 'src/api/internal/billing/InvoiceController.ts';
+const bigBody = Array.from({ length: 400 }, (_, i) => `+  const line${i} = compute(${i});`).join('\n');
+const diffText = (n: number) =>
+  `diff --git a/${REAL_PATH} b/${REAL_PATH}\nindex 111..222 100644\n--- a/${REAL_PATH}\n+++ b/${REAL_PATH}\n@@ -1,1 +1,${n} @@\n${bigBody}\n`;
+
+let sourceHash = 'aaaaaaaaaaaa';
+const calls: Record<string, number> = { metadata: 0, diff: 0 };
+globalThis.fetch = (async (input: string | URL) => {
+  const url = String(input);
+  const ok = (body: unknown) => new Response(typeof body === 'string' ? body : JSON.stringify(body), { status: 200 });
+  if (url.endsWith('/pullrequests/7')) {
+    calls.metadata++;
+    return ok({
+      id: 7,
+      title: 'Add invoice export endpoint',
+      description: 'Adds a public export API.',
+      state: 'OPEN',
+      draft: true,
+      source: { branch: { name: 'feature/WCE-12-export' }, commit: { hash: sourceHash } },
+      destination: { branch: { name: 'main' }, commit: { hash: 'bbbbbbbbbbbb' } }
+    });
+  }
+  if (url.includes('/commits')) return ok({ values: [{ hash: sourceHash + 'ffff', message: 'WCE-12 export invoices' }] });
+  if (url.includes('/diffstat')) {
+    return ok({ values: [{ status: 'modified', lines_added: 400, lines_removed: 0, old: { path: REAL_PATH }, new: { path: REAL_PATH } }] });
+  }
+  if (url.endsWith('/diff')) {
+    calls.diff++;
+    return ok(diffText(400));
+  }
+  return new Response('not found', { status: 404 });
+}) as typeof fetch;
+
+const server = createServer();
+const client = new Client({ name: 'test', version: '0' });
+const [a, b] = InMemoryTransport.createLinkedPair();
+await Promise.all([server.connect(a), client.connect(b)]);
+
+const call = async (name: string, args: Record<string, unknown>) => {
+  const res: any = await client.callTool({ name, arguments: args });
+  return { isError: Boolean(res.isError), text: res.content[0].text as string };
+};
+
+// 1. Local tools before any sync
+assert.deepEqual(JSON.parse((await call('get_pr_sync_status', { pr_url: PR_URL })).text), { synced: false });
+const early = await call('search_pr_files', { pr_url: PR_URL });
+assert.ok(early.isError && early.text.startsWith('Error: PR is not synced'), 'search before sync is an isError result');
+console.log('  ✓ local tools report "not synced" before the first context pack');
+
+// 2. First context pack syncs from Bitbucket
+const pack = await call('get_pr_context_pack', { pr_url: PR_URL });
+assert.ok(!pack.isError, pack.text);
+assert.match(pack.text, /Add invoice export endpoint/);
+assert.equal(calls.diff, 1);
+console.log('  ✓ get_pr_context_pack syncs on first use');
+
+// 3. Read Strategy lists the files to open next (regression: it read a non-existent field)
+assert.match(pack.text, /Read next: .*file_0001/);
+console.log('  ✓ context pack Read Strategy lists next file ids');
+
+// 4. Unchanged commits: freshness check only, no full re-sync
+await call('get_pr_context_pack', { pr_url: PR_URL });
+assert.equal(calls.diff, 1, 'no re-download while the head commits are unchanged');
+
+// 5. New source commit: automatic re-sync
+sourceHash = 'cccccccccccc';
+await call('get_pr_context_pack', { pr_url: PR_URL });
+assert.equal(calls.diff, 2, 're-sync after the source commit moved');
+assert.equal(JSON.parse((await call('get_pr_sync_status', { pr_url: PR_URL })).text).source_commit, sourceHash);
+console.log('  ✓ stale revision is detected by commit hash and re-synced');
+
+// 6. Concurrent refreshes share one fetch
+await Promise.all([1, 2, 3].map(() => call('get_pr_context_pack', { pr_url: PR_URL, refresh: true })));
+assert.equal(calls.diff, 3, 'three concurrent refreshes trigger one download');
+console.log('  ✓ concurrent refreshes are deduplicated');
+
+// 7. Search, then paged file reads
+const found = JSON.parse((await call('search_pr_files', { pr_url: PR_URL, language: 'typescript' })).text);
+assert.equal(found.total, 1);
+assert.equal(found.files[0].path, 'src/.../billing/InvoiceController.ts');
+
+const changes = JSON.parse((await call('get_pr_file_changes', { pr_url: PR_URL, file_id: 'file_0001', max_chars: 500 })).text);
+assert.equal(changes.patch.text.length, 500);
+assert.equal(changes.patch.next_offset, 500);
+const page2 = JSON.parse((await call('get_pr_file_changes', { pr_url: PR_URL, file_id: 1, offset: 500, max_chars: 500 })).text);
+assert.equal(page2.patch.text.length, 500);
+assert.notEqual(page2.patch.text, changes.patch.text);
+assert.ok(page2.patch.total_chars > 1000);
+
+const fileCtx = await call('get_pr_file_context', { pr_url: PR_URL, file_id: 'file_0001', max_chars: 1000 });
+assert.match(fileCtx.text, /continue with offset 1000\.$/);
+console.log('  ✓ file tools page output by offset/max_chars');
+
+// 8. Privacy: the real path never leaves the server (diff headers included)
+const fullPatch = JSON.parse((await call('get_pr_file_changes', { pr_url: PR_URL, file_id: 1, max_chars: 100_000 })).text).patch.text;
+assert.ok(!fullPatch.includes(REAL_PATH), 'sanitized mode must not leak the full path through diff headers');
+assert.ok(!fileCtx.text.includes(REAL_PATH));
+console.log('  ✓ diff headers use the sanitized path');
+
+// 9. Manifest keeps the PR draft flag
+const prDir = path.resolve('ai-context', 'acme', 'acme', 'demo-repo', 'pr_7');
+assert.equal(JSON.parse(fs.readFileSync(path.join(prDir, 'manifest.json'), 'utf-8')).is_draft, true);
+console.log('  ✓ manifest.is_draft comes from Bitbucket');
+
+// 10. Errors are isError results with an "Error:" prefix
+const bad = await call('get_pr_context_pack', { pr_url: 'https://github.com/x/y/pull/1' });
+assert.ok(bad.isError && bad.text.startsWith('Error: '));
+const badId = await call('get_pr_file_context', { pr_url: PR_URL, file_id: '../../etc/passwd' });
+assert.ok(badId.isError && /Invalid file_id/.test(badId.text));
+console.log('  ✓ invalid input returns isError "Error: …"');
+
+// 11. ALLOWED_EMAILS is enforced on the MCP path
+process.env.ALLOWED_EMAILS = 'someone-else@example.com';
+(ConfigManager as any).cached = null;
+const denied = await call('get_pr_context_pack', { pr_url: PR_URL });
+assert.ok(denied.isError && /ALLOWED_EMAILS/.test(denied.text));
+console.log('  ✓ ALLOWED_EMAILS denies other accounts');
+
+await client.close();

@@ -44,7 +44,7 @@ async function runBenchmarkTests() {
   };
 
   // 2. Persist Schema v4.0 Manifest & Check Size
-  const result = DataStore.saveRevision('siliconstack', 'wec.be', 4565, sampleRawRev);
+  const result = DataStore.saveRevision('acme', 'demo.api', 4565, sampleRawRev);
   const manifestJsonStr = StableSerializer.stringify(result.manifest);
   const manifestSizeBytes = Buffer.byteLength(manifestJsonStr, 'utf-8');
 

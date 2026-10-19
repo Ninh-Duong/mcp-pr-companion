@@ -20,7 +20,7 @@ export class AuthService {
 
     const trimmed = input.trim();
 
-    // Check typo like comma instead of dot (e.g. wec,be -> wec.be)
+    // Check typo like comma instead of dot (e.g. demo,api -> demo.api)
     if (trimmed.includes(',')) {
       const suggestion = trimmed.replace(/,/g, '.');
       return {
