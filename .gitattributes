@@ -1,3 +1,3 @@
-# Keep launcher line endings correct regardless of the developer's git autocrlf setting.
-*.sh text eol=lf
+# Normalize line endings in the repo regardless of each developer's core.autocrlf.
+* text=auto eol=lf
 *.cmd text eol=crlf
