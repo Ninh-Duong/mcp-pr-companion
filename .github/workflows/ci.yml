@@ -10,7 +10,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: node bin/cli.js prepare
-      - run: npx tsc --noEmit
+      - run: npx tsc -p tsconfig.test.json   # src + tests
       - run: npm test
   docker:
     runs-on: ubuntu-latest

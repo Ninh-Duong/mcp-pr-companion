@@ -1,3 +1,5 @@
+import { fetchWithRetry } from './http.js';
+
 export interface PaginatedResult<T> {
   values: T[];
   isComplete: boolean;
@@ -23,16 +25,8 @@ export class PaginationHelper {
       }
 
       pageCount++;
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), options.timeoutMs || 30000);
-
       try {
-        const fetchSignal = options.signal
-          ? AbortSignal.any([options.signal, controller.signal])
-          : controller.signal;
-
-        const res = await fetch(nextUrl, { headers, signal: fetchSignal });
-        clearTimeout(timeoutId);
+        const res = await fetchWithRetry(nextUrl, headers, options);
 
         if (!res.ok) {
           const errText = await res.text();
@@ -52,7 +46,6 @@ export class PaginationHelper {
           return { values, isComplete: false, warnings };
         }
       } catch (err: any) {
-        clearTimeout(timeoutId);
         warnings.push(`Pagination error on page ${pageCount}: ${err.message || String(err)}`);
         return { values, isComplete: false, warnings };
       }
