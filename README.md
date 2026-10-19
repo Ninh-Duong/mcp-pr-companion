@@ -125,6 +125,8 @@ Các tool AI có thể gọi (qua mcp-hub tên sẽ có tiền tố `pr__`, vd `
 | `get_pr_file_context` | Xem chi tiết + diff của 1 file (vd `file_0001`), chia trang bằng `offset` / `max_chars` |
 | `get_pr_file_changes` | Phân loại, rủi ro, symbol của 1 file dạng JSON (kèm 1 trang diff) |
 | `get_pr_sync_status` | Xem PR đã có dữ liệu ở máy chưa (không gọi Bitbucket) |
+| `get_pr_comments` | Đọc comment review của PR (cả comment inline, kèm `file_id`), đã che thông tin nhạy cảm; `include_resolved: false` để chỉ lấy thread chưa resolve |
+| `list_my_open_prs` | Liệt kê PR đang mở của bạn (theo `BITBUCKET_REPOSITORY` hoặc 1 repo) kèm sẵn `pr_url` |
 | `check_bitbucket_connection` | Kiểm tra email/token trong `.env` có kết nối được Bitbucket không |
 
 Muốn dùng qua **mcp-hub** (một MCP gom nhiều MCP con): xem [docs/HUB_INTEGRATION.md](docs/HUB_INTEGRATION.md).
@@ -142,7 +144,7 @@ Mọi cấu hình nằm trong file `.env`. Danh sách đầy đủ có trong `.e
 | `BITBUCKET_REPOSITORY` | ✅ (với `cmd`, `generate-all`) | Danh sách repo, cách nhau bằng dấu phẩy: `wec.be,wec.database` hoặc `workspace/repo`. `generate-all` chạy **tất cả** repo; `cmd` cho chọn repo (và đổi repo trong menu). MCP server không cần vì lấy repo từ link PR |
 | `BITBUCKET_WORKSPACE` | | Workspace mặc định cho các repo không ghi workspace, vd `siliconstack` |
 | `ALLOWED_EMAILS` | | Chỉ cho phép các email này chạy tool (phân cách bằng dấu phẩy). Để trống = ai cũng chạy được |
-| `TICKET_PREFIXES` | | Tiền tố mã ticket, mặc định `WCE-,PROJ-,JIRA-` |
+| `TICKET_PREFIXES` | | Tiền tố mã ticket ưu tiên, mặc định `WCE-,PROJ-,JIRA-`. Ngoài ra tool tự nhận mã dạng `KEY-123` trong tên branch hoặc `[KEY-123]` trong title |
 | `PRIVACY_*` | | Mức ẩn thông tin trong kết quả (mặc định đã an toàn) |
 | `AI_CONTEXT_ROOT` | | Thư mục lưu kết quả, mặc định `ai-context` |
 | `AI_CONTEXT_COMPANY` | | Thêm 1 cấp thư mục (vd tên công ty) trước `<workspace>`. Để trống = không thêm |

@@ -43,6 +43,8 @@ Copy the hub template `config/mcps/mcp-pr-companion.example.json`:
       { "server": "mcp-pr-companion", "name": "get_pr_file_context", "exposeAs": "pr__get_pr_file_context" },
       { "server": "mcp-pr-companion", "name": "get_pr_file_changes", "exposeAs": "pr__get_pr_file_changes" },
       { "server": "mcp-pr-companion", "name": "get_pr_sync_status", "exposeAs": "pr__get_pr_sync_status" },
+      { "server": "mcp-pr-companion", "name": "get_pr_comments", "exposeAs": "pr__get_pr_comments" },
+      { "server": "mcp-pr-companion", "name": "list_my_open_prs", "exposeAs": "pr__list_my_open_prs" },
       { "server": "mcp-pr-companion", "name": "check_bitbucket_connection", "exposeAs": "pr__check_bitbucket_connection" }
     ]
   }
@@ -60,7 +62,7 @@ Both entries start `enabled: false`. Set both to `true` once `.env` is filled an
 | Forwards tool schemas and annotations unchanged | zod `inputSchema` and annotations on every tool |
 | Prefixes tools with `pr__` | Child tool names have no prefix |
 | Serves the contract file as a prompt and passes on server instructions | `INSTRUCTIONS` stays short and generic |
-| Applies a per-call timeout | Only `get_pr_context_pack` and `check_bitbucket_connection` do network I/O; file tools are local reads |
+| Applies a per-call timeout | Only `get_pr_context_pack`, `get_pr_comments`, `list_my_open_prs` and `check_bitbucket_connection` do network I/O; file tools are local reads |
 | Needs a read-only upstream health check for `scripts/smoke.py` (`docs/child-mcp-compatibility.md`) | `check_bitbucket_connection` returns `{"connected": true}` only when the token authenticates |
 
 Renaming a tool, changing its parameters or moving the log path requires updating the hub's `hub.json` allowlist (the user does this), `docs/mcps/mcp-pr-companion.md` and `scripts/smoke.py` in the same change.
