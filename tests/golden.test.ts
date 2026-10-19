@@ -13,8 +13,10 @@ function runGoldenTests() {
     additions: 3,
     deletions: 0,
     isBinary: false,
+    headerLines: [],
     hunks: [
       {
+        header: '@@',
         oldStart: 10,
         oldLines: 5,
         newStart: 10,
@@ -45,8 +47,10 @@ function runGoldenTests() {
     additions: 5,
     deletions: 2,
     isBinary: false,
+    headerLines: [],
     hunks: [
       {
+        header: '@@',
         oldStart: 20,
         oldLines: 2,
         newStart: 20,
@@ -73,6 +77,7 @@ function runGoldenTests() {
     additions: 0,
     deletions: 0,
     isBinary: false,
+    headerLines: [],
     hunks: []
   };
 
@@ -88,8 +93,10 @@ function runGoldenTests() {
     additions: 10,
     deletions: 0,
     isBinary: false,
+    headerLines: [],
     hunks: [
       {
+        header: '@@',
         oldStart: 0,
         oldLines: 0,
         newStart: 1,
@@ -110,6 +117,7 @@ function runGoldenTests() {
     additions: 0,
     deletions: 0,
     isBinary: true,
+    headerLines: [],
     hunks: []
   };
   const c5 = ChangeClassifier.classify(binaryDiff);

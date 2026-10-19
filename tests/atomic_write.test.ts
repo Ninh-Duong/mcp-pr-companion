@@ -1,5 +1,4 @@
 import fs from 'fs';
-import path from 'path';
 import { RevisionWriter } from '../src/core/output/revision.writer.js';
 import { OutputReader } from '../src/core/output/output.reader.js';
 

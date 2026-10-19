@@ -1,6 +1,7 @@
 import { ApiTokenAuth } from '../auth/api-token.auth.js';
 import { PaginationHelper, PaginatedResult } from './pagination.js';
 import { SecretScanner } from '../privacy/secret.scanner.js';
+import { fetchWithRetry } from './http.js';
 
 export interface BitbucketFetchOptions {
   timeoutMs?: number;
@@ -42,58 +43,23 @@ export class BitbucketClient {
 
   async getPRDiffText(workspace: string, repoSlug: string, prId: number, options: BitbucketFetchOptions = {}): Promise<string> {
     const url = `https://api.bitbucket.org/2.0/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/pullrequests/${prId}/diff`;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), options.timeoutMs || 45000);
-
     try {
-      const fetchSignal = options.signal
-        ? AbortSignal.any([options.signal, controller.signal])
-        : controller.signal;
-
-      const diffHeaders = {
-        ...this.headers,
-        'Accept': 'text/plain'
-      };
-
-      const res = await fetch(url, { headers: diffHeaders, signal: fetchSignal });
-      clearTimeout(timeoutId);
-
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-      }
-
+      const res = await fetchWithRetry(url, { ...this.headers, Accept: 'text/plain' }, { timeoutMs: options.timeoutMs || 45000, signal: options.signal });
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
       return await res.text();
     } catch (err: any) {
-      clearTimeout(timeoutId);
       throw new Error(`Failed to download PR diff: ${SecretScanner.scanAndRedact(err.message || String(err))}`);
     }
   }
 
   private async fetchJson(url: string, options: BitbucketFetchOptions = {}): Promise<any> {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), options.timeoutMs || 30000);
-
-    try {
-      const fetchSignal = options.signal
-        ? AbortSignal.any([options.signal, controller.signal])
-        : controller.signal;
-
-      const res = await fetch(url, { headers: this.headers, signal: fetchSignal });
-      clearTimeout(timeoutId);
-
-      if (!res.ok) {
-        const errBody = await res.text();
-        const redactedErr = SecretScanner.scanAndRedact(errBody);
-        const err: any = new Error(`HTTP ${res.status}: ${res.statusText}`);
-        err.status = res.status;
-        err.body = redactedErr;
-        throw err;
-      }
-
-      return await res.json();
-    } catch (err: any) {
-      clearTimeout(timeoutId);
+    const res = await fetchWithRetry(url, this.headers, options);
+    if (!res.ok) {
+      const err: any = new Error(`HTTP ${res.status}: ${res.statusText}`);
+      err.status = res.status;
+      err.body = SecretScanner.scanAndRedact(await res.text());
       throw err;
     }
+    return await res.json();
   }
 }

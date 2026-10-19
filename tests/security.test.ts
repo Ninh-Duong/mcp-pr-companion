@@ -3,7 +3,6 @@ import { PIISanitizer } from '../src/core/privacy/pii.sanitizer.js';
 import { PathSanitizer } from '../src/core/privacy/path.sanitizer.js';
 import { SensitiveFilePolicy } from '../src/core/analyzer/sensitive.file.policy.js';
 import { OpaqueIDGenerator } from '../src/core/storage/opaque.id.js';
-import { DataStore } from '../src/core/storage/data.store.js';
 import { RedactionTracker } from '../src/core/privacy/redaction.report.js';
 import { LogRedactor } from '../src/core/logging/log.redactor.js';
 import { OutputReader } from '../src/core/output/output.reader.js';
