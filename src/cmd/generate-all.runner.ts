@@ -47,7 +47,6 @@ export async function runGenerateAll(): Promise<number> {
         readiness: 'all',
         forceRefresh: false,
         concurrency: 2,
-        strategy: 'overwrite',
         onProgress: (progress) => GenerationProgressRenderer.render(progress)
       });
 

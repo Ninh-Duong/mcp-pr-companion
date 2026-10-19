@@ -1,7 +1,7 @@
 import { select } from '@inquirer/prompts';
 import { DiscoveredPR } from '../core/discovery/pr-list.normalizer.js';
 import { runtimeSession } from '../core/auth/runtime-session.js';
-import { ApiTokenAuth } from '../core/auth/api-token.auth.js';
+import { BitbucketClient } from '../core/bitbucket/bitbucket.client.js';
 import { DataStore } from '../core/storage/data.store.js';
 
 export class PRDetailScreen {
@@ -32,13 +32,10 @@ export class PRDetailScreen {
     }
 
     // Lazy load stats from API
-    const headers = ApiTokenAuth.getAuthHeaders(session.email, session.token);
     try {
-      const url = `https://api.bitbucket.org/2.0/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/pullrequests/${prId}/diffstat`;
-      const res = await fetch(url, { headers });
-      if (res.ok) {
-        const data: any = await res.json();
-        const diffstat = data.values || [];
+      const res = await new BitbucketClient(session.email, session.token).getPRDiffstat(workspace, repoSlug, prId);
+      if (res.values.length > 0) {
+        const diffstat = res.values;
         let additions = 0;
         let deletions = 0;
         diffstat.forEach((item: any) => {

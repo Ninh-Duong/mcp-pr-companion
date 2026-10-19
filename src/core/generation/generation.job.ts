@@ -11,7 +11,6 @@ export class GenerationJob {
     prId: number,
     title: string,
     forceRefresh = false,
-    strategy: 'overwrite' | 'new_version' = 'overwrite',
     onProgress?: (state: PRGenerationJobState) => void
   ): Promise<{ success: boolean; isCached: boolean; error?: string; errorCode?: string }> {
     const jobState: PRGenerationJobState = {
@@ -33,17 +32,22 @@ export class GenerationJob {
     try {
       const collector = new BitbucketCollector(email, token);
 
-      updateStage('metadata', 15);
-      updateStage('commits', 30);
-      updateStage('diffstat', 45);
-      updateStage('diff_download', 60);
+      // Unless forced, skip PRs whose stored revision still matches the PR's head commits.
+      const active = forceRefresh ? null : DataStore.getActiveRevision(workspace, repoSlug, prId);
+      if (active) {
+        updateStage('metadata', 15);
+        const head = await collector.getHeadCommits(workspace, repoSlug, prId);
+        if (head.source === active.current.source_commit && head.destination === active.current.target_commit) {
+          jobState.status = 'cached';
+          updateStage('complete', 100);
+          return { success: true, isCached: true };
+        }
+      }
 
+      updateStage('diff_download', 30);
       const rawRev = await collector.collect(workspace, repoSlug, prId);
 
-      updateStage('privacy_sanitization', 75);
-      updateStage('analysis', 85);
-      updateStage('atomic_persistence', 95);
-
+      updateStage('analysis', 80);
       DataStore.saveRevision(workspace, repoSlug, prId, rawRev);
 
       jobState.status = 'complete';

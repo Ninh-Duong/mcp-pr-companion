@@ -130,7 +130,6 @@ export class GenerateMenu {
       }
 
       // Step 2: Check for existing local data conflicts
-      let strategy: 'overwrite' | 'new_version' = 'overwrite';
       const existingPRs = prsToGenerate.filter((pr) => {
         const active = DataStore.getActiveRevision(
           session.repository.workspace,
@@ -145,10 +144,9 @@ export class GenerateMenu {
         const strategyChoice = await select({
           message: 'Choose how to handle existing PR data:',
           choices: [
-            { name: '1. Overwrite existing data (Replace in place)', value: 'overwrite' },
-            { name: '2. Create new version (Preserve history & update latest version)', value: 'new_version' },
-            { name: '3. Skip PRs with existing data', value: 'skip' },
-            { name: '4. ⬅️ Cancel and return to Generate menu', value: 'cancel' }
+            { name: '1. Regenerate (a new revision is written; the last 5 are kept)', value: 'regenerate' },
+            { name: '2. Skip PRs with existing data', value: 'skip' },
+            { name: '3. ⬅️ Cancel and return to Generate menu', value: 'cancel' }
           ]
         });
 
@@ -170,15 +168,12 @@ export class GenerateMenu {
             await new Promise((res) => setTimeout(res, 2000));
             continue;
           }
-        } else {
-          strategy = strategyChoice as 'overwrite' | 'new_version';
         }
       }
 
       // Confirmation screen
       console.log(`\nGeneration Plan Summary:`);
       console.log(`- Selected PRs:           ${prsToGenerate.length}`);
-      console.log(`- Conflict strategy:      ${strategy === 'new_version' ? 'Create new version' : 'Overwrite'}`);
       console.log(`- Expected generations:   ${prsToGenerate.length}\n`);
 
       const shouldProceed = await confirm({
@@ -199,7 +194,6 @@ export class GenerateMenu {
         prsToGenerate,
         2,
         true, // forceRefresh since user confirmed generation
-        strategy,
         (progress) => {
           GenerationProgressRenderer.render(progress);
         }

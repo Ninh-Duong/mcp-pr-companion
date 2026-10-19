@@ -1,4 +1,4 @@
-import { ApiTokenAuth } from '../auth/api-token.auth.js';
+import { BitbucketClient } from '../bitbucket/bitbucket.client.js';
 import { PRFilterBuilder } from './pr-filter.builder.js';
 import { PRListNormalizer, DiscoveredPR } from './pr-list.normalizer.js';
 import { DiscoveryCache } from './discovery-cache.js';
@@ -50,34 +50,12 @@ export class PRDiscoveryService {
       throw new Error('Authenticated user UUID is required for PR discovery. Cannot perform anonymous/unbound query.');
     }
 
-    const headers = ApiTokenAuth.getAuthHeaders(reqEmail, reqToken);
-    const query = PRFilterBuilder.buildQuery(normUserUuid);
-    const primaryUrl = `https://api.bitbucket.org/2.0/repositories/${encodeURIComponent(reqWorkspace)}/${encodeURIComponent(reqRepoSlug)}/pullrequests?q=${encodeURIComponent(query)}&sort=-updated_on&pagelen=50`;
+    const client = new BitbucketClient(reqEmail, reqToken);
+    let rawValues = (await client.listPullRequests(reqWorkspace, reqRepoSlug, PRFilterBuilder.buildQuery(normUserUuid))).values;
 
-    let rawValues: any[] = [];
-
-    try {
-      const res = await fetch(primaryUrl, { headers });
-      if (res.ok) {
-        const data: any = await res.json();
-        rawValues = data.values || [];
-      }
-    } catch {
-      rawValues = [];
-    }
-
-    // Client-side fallback if server-side query returned empty or failed
+    // Client-side fallback if the server-side author query returned nothing (or failed)
     if (rawValues.length === 0) {
-      const fallbackUrl = `https://api.bitbucket.org/2.0/repositories/${encodeURIComponent(reqWorkspace)}/${encodeURIComponent(reqRepoSlug)}/pullrequests?q=state%3D%22OPEN%22&sort=-updated_on&pagelen=50`;
-      try {
-        const res = await fetch(fallbackUrl, { headers });
-        if (res.ok) {
-          const data: any = await res.json();
-          rawValues = data.values || [];
-        }
-      } catch {
-        rawValues = [];
-      }
+      rawValues = (await client.listPullRequests(reqWorkspace, reqRepoSlug, 'state="OPEN"')).values;
     }
 
     // MANDATORY Client-Side Ownership Filter Across All Branches

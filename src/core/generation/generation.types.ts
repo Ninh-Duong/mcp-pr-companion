@@ -2,12 +2,8 @@ export type GenerationStage =
   | 'queued'
   | 'revision_check'
   | 'metadata'
-  | 'commits'
-  | 'diffstat'
   | 'diff_download'
-  | 'privacy_sanitization'
   | 'analysis'
-  | 'atomic_persistence'
   | 'complete'
   | 'failed';
 
