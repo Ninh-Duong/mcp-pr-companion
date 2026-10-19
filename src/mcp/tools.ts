@@ -13,6 +13,9 @@ Workflow:
 1. get_pr_context_pack(pr_url) first. It syncs the PR from Bitbucket when there is no local copy or the PR has new commits, then returns a compact Markdown summary with a Read Strategy listing the file ids worth opening.
 2. search_pr_files(pr_url, filters) to list file ids by path, language, status, change_kind or risk_tag.
 3. get_pr_file_context(pr_url, file_id) for one file's summary and diff, or get_pr_file_changes(pr_url, file_id) for classification, risk evidence and symbols as JSON.
+4. get_pr_comments(pr_url) for review feedback (include_resolved=false for open threads only).
+Re-review: the pack's "Changed since last sync" section lists the only file ids that changed; open just those.
+No PR URL? list_my_open_prs lists the account's open PRs.
 Long text is paged: when next_offset is not null (or the text ends with "continue with offset N"), call again with that offset.
 File paths are sanitized by design; filter on what search_pr_files returns. Tools never write to Bitbucket.
 check_bitbucket_connection verifies the credentials when a call fails with an auth error.`;
@@ -108,6 +111,37 @@ export function createServer(): McpServer {
     },
     ({ pr_url, file_id, include_patch, offset, max_chars }) =>
       run('get_pr_file_changes', () => json(PRContextService.getFileChange(pr_url, file_id, include_patch, offset, max_chars)))
+  );
+
+  server.registerTool(
+    'get_pr_comments',
+    {
+      title: 'PR comments',
+      description:
+        'Review comments of a Bitbucket PR, fetched live: general and inline (with file_id/path/line when the PR is synced), resolved flag, sanitized text. Paged by offset/limit. Returns JSON {total, complete, comments, next_offset}.',
+      inputSchema: {
+        pr_url: prUrl,
+        include_resolved: z.boolean().default(true).describe('false = only unresolved threads.'),
+        offset: z.number().int().min(0).default(0),
+        limit: z.number().int().min(1).max(200).default(50)
+      },
+      annotations: { readOnlyHint: true, openWorldHint: true }
+    },
+    ({ pr_url, ...opts }) => run('get_pr_comments', async () => json(await PRContextService.getComments(pr_url, opts)))
+  );
+
+  server.registerTool(
+    'list_my_open_prs',
+    {
+      title: 'My open PRs',
+      description:
+        'Open PRs authored by the configured Bitbucket account, in one repository or every repository listed in BITBUCKET_REPOSITORY. Returns JSON {total, prs:[{pr_url, repository, id, title, is_draft, source_branch, target_branch, updated_on, local}]}; local is missing | cached | outdated.',
+      inputSchema: {
+        repository: z.string().optional().describe('"workspace/repo"; omit to use BITBUCKET_REPOSITORY.')
+      },
+      annotations: { readOnlyHint: true, openWorldHint: true }
+    },
+    ({ repository }) => run('list_my_open_prs', async () => json(await PRContextService.listMyOpenPRs(repository)))
   );
 
   server.registerTool(

@@ -10,6 +10,8 @@ process.env.BITBUCKET_EMAIL = 'dev@example.com';
 process.env.BITBUCKET_API_TOKEN = 'test-token';
 process.env.AI_CONTEXT_COMPANY = 'acme';
 process.env.PRIVACY_FILE_PATH_MODE = 'sanitized';
+delete process.env.BITBUCKET_REPOSITORY;
+delete process.env.ALLOWED_EMAILS;
 
 const { createServer } = await import('../src/mcp/tools.ts');
 const { ConfigManager } = await import('../src/config/config.manager.ts');
@@ -17,8 +19,9 @@ const { ConfigManager } = await import('../src/config/config.manager.ts');
 const PR_URL = 'https://bitbucket.org/acme/demo-repo/pull-requests/7';
 const REAL_PATH = 'src/api/internal/billing/InvoiceController.ts';
 const bigBody = Array.from({ length: 400 }, (_, i) => `+  const line${i} = compute(${i});`).join('\n');
+let extraLine = '';
 const diffText = (n: number) =>
-  `diff --git a/${REAL_PATH} b/${REAL_PATH}\nindex 111..222 100644\n--- a/${REAL_PATH}\n+++ b/${REAL_PATH}\n@@ -1,1 +1,${n} @@\n${bigBody}\n`;
+  `diff --git a/${REAL_PATH} b/${REAL_PATH}\nindex 111..222 100644\n--- a/${REAL_PATH}\n+++ b/${REAL_PATH}\n@@ -1,1 +1,${n} @@\n${bigBody}${extraLine}\n`;
 
 let sourceHash = 'aaaaaaaaaaaa';
 let userStatus = 200;
@@ -40,6 +43,17 @@ globalThis.fetch = (async (input: string | URL) => {
       source: { branch: { name: 'feature/WCE-12-export' }, commit: { hash: sourceHash } },
       destination: { branch: { name: 'main' }, commit: { hash: 'bbbbbbbbbbbb' } }
     });
+  }
+  if (url.includes('/pullrequests/7/comments')) {
+    return ok({ values: [
+      { id: 3, parent: { id: 1 }, content: { raw: 'done, token ATATT3xFfGF0abcdefghijklmnop0123' }, resolution: { type: 'resolved' }, created_on: '2026-01-02' },
+      { id: 1, content: { raw: 'Please rename this, ping dev@example.com' }, user: { display_name: 'Reviewer' }, created_on: '2026-01-01', inline: { path: REAL_PATH, to: 10 } },
+      { id: 2, deleted: true, content: { raw: 'gone' } }
+    ] });
+  }
+  if (url.includes('/pullrequests?q=')) {
+    return ok({ values: [{ id: 7, title: 'Add invoice export endpoint', state: 'OPEN', author: { uuid: '{u}' }, updated_on: '2026-01-03',
+      source: { branch: { name: 'feature/WCE-12-export' }, commit: { hash: sourceHash } }, destination: { branch: { name: 'main' }, commit: { hash: 'bbbbbbbbbbbb' } } }] });
   }
   if (url.includes('/commits')) return ok({ values: [{ hash: sourceHash + 'ffff', message: 'WCE-12 export invoices' }] });
   if (url.includes('/diffstat')) {
@@ -83,9 +97,11 @@ console.log('  ✓ context pack Read Strategy lists next file ids');
 await call('get_pr_context_pack', { pr_url: PR_URL });
 assert.equal(calls.diff, 1, 'no re-download while the head commits are unchanged');
 
-// 5. New source commit: automatic re-sync
+// 5. New source commit: automatic re-sync, and the pack names the files that changed
 sourceHash = 'cccccccccccc';
-await call('get_pr_context_pack', { pr_url: PR_URL });
+extraLine = '\n+  const added = 1;';
+const resynced = await call('get_pr_context_pack', { pr_url: PR_URL });
+assert.match(resynced.text, /## Changed since last sync \(rev_aaaaaaa_bbbbbbb\)\nFiles: file_0001/);
 assert.equal(calls.diff, 2, 're-sync after the source commit moved');
 assert.equal(JSON.parse((await call('get_pr_sync_status', { pr_url: PR_URL })).text).source_commit, sourceHash);
 console.log('  ✓ stale revision is detected by commit hash and re-synced');
@@ -122,6 +138,31 @@ console.log('  ✓ diff headers use the sanitized path');
 const prDir = path.resolve('ai-context', 'acme', 'acme', 'demo-repo', 'pr_7');
 assert.equal(JSON.parse(fs.readFileSync(path.join(prDir, 'manifest.json'), 'utf-8')).is_draft, true);
 console.log('  ✓ manifest.is_draft comes from Bitbucket');
+
+// 9b. Comments: deleted dropped, sanitized, inline mapped to file_id, paged, resolved filter
+const comments = JSON.parse((await call('get_pr_comments', { pr_url: PR_URL })).text);
+assert.equal(comments.total, 2);
+assert.deepEqual(comments.comments.map((c: any) => c.id), [1, 3]);
+const inline = comments.comments[0];
+assert.equal(inline.file_id, 'file_0001');
+assert.equal(inline.path, 'src/.../billing/InvoiceController.ts');
+assert.equal(inline.line, 10);
+assert.ok(!inline.text.includes('dev@example.com') && !('author' in inline), 'email redacted, author removed by default');
+assert.ok(!comments.comments[1].text.includes('ATATT3x') && comments.comments[1].resolved === true);
+assert.equal(JSON.parse((await call('get_pr_comments', { pr_url: PR_URL, include_resolved: false })).text).total, 1);
+const firstPage = JSON.parse((await call('get_pr_comments', { pr_url: PR_URL, limit: 1 })).text);
+assert.equal(firstPage.comments.length, 1);
+assert.equal(firstPage.next_offset, 1);
+console.log('  ✓ get_pr_comments sanitizes, maps inline comments to file ids and pages');
+
+// 9c. My open PRs
+const mine = JSON.parse((await call('list_my_open_prs', { repository: 'acme/demo-repo' })).text);
+assert.equal(mine.total, 1);
+assert.equal(mine.prs[0].pr_url, PR_URL);
+assert.ok(['cached', 'outdated'].includes(mine.prs[0].local));
+const noRepo = await call('list_my_open_prs', {});
+assert.ok(noRepo.isError && /BITBUCKET_REPOSITORY/.test(noRepo.text));
+console.log('  ✓ list_my_open_prs returns ready-to-use pr_url values');
 
 // 10. Errors are isError results with an "Error:" prefix
 const bad = await call('get_pr_context_pack', { pr_url: 'https://github.com/x/y/pull/1' });

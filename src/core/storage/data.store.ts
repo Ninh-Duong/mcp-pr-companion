@@ -249,7 +249,8 @@ export class DataStore {
         scanned: true,
         redacted_items_count: tracker.getReport(privacy.mode).redacted_values
       },
-      analyzer_version: '4.0.0'
+      analyzer_version: '4.0.0',
+      ...this.diffAgainstActive(workspace, repoSlug, prId, rawRev, fileEntries, fileChangesMap)
     };
 
     const commitsJsonl = projectedCommits.map(c => JSON.stringify(c));
@@ -272,6 +273,32 @@ export class DataStore {
     const cacheKey = `bitbucket:${workspace}:${repoSlug}:${prId}:${rawRev.sourceHash.substring(0, 7)}:${rawRev.destinationHash.substring(0, 7)}:v4`;
 
     return { cacheKey, manifest: result.manifest, revisionId: result.revisionId };
+  }
+
+  /**
+   * Compares the new revision with the currently active one (if it is a different revision).
+   * Files are matched by sanitized path because file ids are positional and can shift between
+   * revisions; a file counts as changed when it is new or its sanitized patch differs.
+   */
+  private static diffAgainstActive(
+    workspace: string,
+    repoSlug: string,
+    prId: number,
+    rawRev: RawPRRevision,
+    fileEntries: FileIndexEntryV4[],
+    fileChangesMap: Map<string, { change: FileChangeV4; diffContent: string }>
+  ): { changes_since_previous?: NonNullable<PRManifestV4['changes_since_previous']> } {
+    const previous = OutputReader.getActiveRevision(workspace, repoSlug, prId)?.current.active_revision;
+    if (!previous || previous === `rev_${rawRev.sourceHash.substring(0, 7)}_${rawRev.destinationHash.substring(0, 7)}`) return {};
+
+    const oldPatchByPath = new Map<string, string>();
+    for (const entry of OutputReader.getFileIndex(workspace, repoSlug, prId, previous)) {
+      oldPatchByPath.set(entry.path, OutputReader.getFileChange(workspace, repoSlug, prId, entry.id, previous)?.diffContent ?? '');
+    }
+    const changed = fileEntries.filter(e => oldPatchByPath.get(e.path) !== fileChangesMap.get(e.id)?.diffContent).map(e => e.id);
+    const current = new Set(fileEntries.map(e => e.path));
+    const removed = [...oldPatchByPath.keys()].filter(p => !current.has(p));
+    return { changes_since_previous: { previous_revision: previous, changed_file_ids: changed, removed_paths: removed } };
   }
 
   private static getLanguageForPath(filePath: string): string {

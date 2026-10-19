@@ -6,6 +6,10 @@ import { OutputReader } from '../core/output/output.reader.js';
 import { FileIndexEntryV4 } from '../core/output/schema/file_index.v4.schema.js';
 import { FileChangeV4 } from '../core/output/schema/file_change.v4.schema.js';
 import { SecretScanner } from '../core/privacy/secret.scanner.js';
+import { PIISanitizer } from '../core/privacy/pii.sanitizer.js';
+import { PathSanitizer } from '../core/privacy/path.sanitizer.js';
+import { ConfigManager } from '../config/config.manager.js';
+import { PRDiscoveryService } from '../core/discovery/pr-discovery.service.js';
 
 export interface Page {
   text: string;
@@ -128,6 +132,71 @@ export class PRContextService {
       (!filters.risk_tag || f.risk_tags.includes(filters.risk_tag))
     );
     return { total: files.length, files: files.slice(0, filters.limit) };
+  }
+
+  /**
+   * PR comments, fetched live (comments change without new commits), sanitized like PR text.
+   * Inline comments are mapped to the local file id when the PR is synced (matched on sanitized path).
+   */
+  static async getComments(prUrl: string, opts: { offset: number; limit: number; include_resolved: boolean }) {
+    const pr = PRRegistry.parseAndValidateUrl(prUrl);
+    const res = await new BitbucketCollector().getComments(pr.workspace, pr.repoSlug, pr.prId);
+    const { privacy } = ConfigManager.loadBase();
+
+    const idByPath = new Map<string, string>();
+    for (const f of OutputReader.getFileIndex(pr.workspace, pr.repoSlug, pr.prId)) if (!idByPath.has(f.path)) idByPath.set(f.path, f.id);
+
+    const clean = (text: string) => SecretScanner.scanAndRedact(PIISanitizer.sanitizeText(text));
+    const comments = res.values
+      .filter((c: any) => !c.deleted && (opts.include_resolved || !c.resolution))
+      .sort((a: any, b: any) => a.id - b.id)
+      .map((c: any) => {
+        const inline = c.inline?.path && privacy.file_path_mode !== 'opaque'
+          ? { path: PathSanitizer.sanitize(c.inline.path, privacy.file_path_mode), line: c.inline.to ?? c.inline.from ?? null }
+          : null;
+        return {
+          id: c.id,
+          parent_id: c.parent?.id ?? null,
+          ...(inline ? { file_id: idByPath.get(inline.path) ?? null, path: inline.path, line: inline.line } : {}),
+          resolved: Boolean(c.resolution),
+          created_on: c.created_on,
+          ...(privacy.remove_author ? {} : { author: PIISanitizer.sanitizeAuthor(c.user, false)?.display_name }),
+          text: clean(c.content?.raw ?? '')
+        };
+      });
+
+    const page = comments.slice(opts.offset, opts.offset + opts.limit);
+    const end = opts.offset + page.length;
+    return { total: comments.length, complete: res.isComplete, comments: page, next_offset: end < comments.length ? end : null };
+  }
+
+  /** Open PRs authored by the token's account, in one repository or every BITBUCKET_REPOSITORY entry. */
+  static async listMyOpenPRs(repository?: string) {
+    const collector = new BitbucketCollector(); // credentials + ALLOWED_EMAILS
+    const { email, token, repositories } = ConfigManager.credentials();
+    const targets = repository ? [repository] : repositories;
+    if (targets.length === 0) throw new Error('No repository: pass repository ("workspace/repo") or set BITBUCKET_REPOSITORY in .env.');
+    if (targets.some(r => !/^[^/\s]+\/[^/\s]+$/.test(r))) throw new Error('repository must look like "workspace/repo".');
+
+    const me = await collector.currentUserUuid();
+    const prs = [];
+    for (const target of targets) {
+      const [workspace, repoSlug] = target.split('/');
+      for (const p of await PRDiscoveryService.discoverOpenPRs(email, token, workspace, repoSlug, me)) {
+        prs.push({
+          pr_url: `https://bitbucket.org/${workspace}/${repoSlug}/pull-requests/${p.id}`,
+          repository: target,
+          id: p.id,
+          title: p.title,
+          is_draft: p.isDraft,
+          source_branch: p.sourceBranch,
+          target_branch: p.targetBranch,
+          updated_on: p.updatedOn,
+          local: p.cacheStatus.toLowerCase()
+        });
+      }
+    }
+    return { total: prs.length, prs };
   }
 
   static getSyncStatus(prUrl: string): object {

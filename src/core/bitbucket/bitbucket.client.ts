@@ -30,6 +30,12 @@ export class BitbucketClient {
     return PaginationHelper.fetchAllPages(url, this.headers, options);
   }
 
+  /** Every comment of a PR (general and inline), all pages. */
+  async getPRComments(workspace: string, repoSlug: string, prId: number, options: BitbucketFetchOptions = {}): Promise<PaginatedResult<any>> {
+    const url = `https://api.bitbucket.org/2.0/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/pullrequests/${prId}/comments?pagelen=100`;
+    return PaginationHelper.fetchAllPages(url, this.headers, options);
+  }
+
   /** The authenticated account (needs read:user). Used as a credentials check. */
   async getCurrentUser(options: BitbucketFetchOptions = {}): Promise<any> {
     return this.fetchJson('https://api.bitbucket.org/2.0/user', options);
