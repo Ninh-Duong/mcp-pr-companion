@@ -53,7 +53,8 @@ export class DataStore {
     const ticketId = GitParser.extractTicketId(
       projectedMeta.source.branch.name,
       commitSubjects,
-      config.ticket_prefix
+      config.ticket_prefix,
+      sanitizedTitle
     );
 
     // 4. Parse unified diff

@@ -31,6 +31,15 @@ export interface ProjectedDiffstatItem {
 }
 
 export class BitbucketAllowlistProjector {
+  static readonly MAX_DESCRIPTION_CHARS = 4000;
+
+  /** Caps the description but says so: a silent cut would drop acceptance criteria without a trace. */
+  static truncateDescription(raw: unknown): string {
+    const text = String(raw || '').trim();
+    if (text.length <= this.MAX_DESCRIPTION_CHARS) return text;
+    return `${text.substring(0, this.MAX_DESCRIPTION_CHARS).trim()}\n\n_[description truncated: ${this.MAX_DESCRIPTION_CHARS} of ${text.length} chars]_`;
+  }
+
   static projectMetadata(raw: any, removeAuthor = true): ProjectedMetadata {
     if (!raw) {
       return {
@@ -46,7 +55,7 @@ export class BitbucketAllowlistProjector {
     const projected: ProjectedMetadata = {
       id: raw.id || 0,
       title: (raw.title || '').trim(),
-      description: (raw.description || '').substring(0, 1000).trim(),
+      description: this.truncateDescription(raw.description),
       state: raw.state || 'open',
       draft: Boolean(raw.draft),
       source: {

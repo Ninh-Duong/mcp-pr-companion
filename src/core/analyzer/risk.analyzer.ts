@@ -53,11 +53,13 @@ export class RiskAnalyzer {
     }
 
     // 2. Authentication & Authorization Security (auth_security)
+    // Strong signals only: bare words like "token" or "hash" in code (cancellationToken, GetHashCode)
+    // used to flag ordinary PRs as high risk.
     if (
       /\[Authorize\b/i.test(allChangedText) ||
       /\[AllowAnonymous\]/i.test(allChangedText) ||
-      /jwt|token|bearer|claim|permission|rbac|identity/i.test(filepath) ||
-      /jwt|token|bearer|claim|permission|rbac|password|hash|encrypt|secret/i.test(allChangedText)
+      /auth(?!or)|identity|jwt|oauth|permission|rbac/i.test(filepath) ||
+      /\b(ClaimsPrincipal|ClaimTypes|JwtSecurityToken\w*|TokenValidationParameters|PasswordHasher|HashPassword|VerifyHashedPassword|AddAuthentication|AddAuthorization|AuthorizationPolicy\w*|SignInAsync|SignOutAsync)\b/.test(allChangedText)
     ) {
       tags.push('auth_security');
       evidence.push('Authentication, authorization, or security sensitive logic modified');
@@ -84,7 +86,8 @@ export class RiskAnalyzer {
       classification.kind === 'configuration' ||
       basename === 'appsettings.json' ||
       basename.endsWith('.env') ||
-      /apiKey|ConnectionString|Password|Secret/i.test(allChangedText)
+      // Secret-looking keys count only in config files, not in ordinary code.
+      (/\.(json|ya?ml|config|xml|ini|properties|env)$/i.test(basename) && /apiKey|ConnectionString|Password|Secret/i.test(allChangedText))
     ) {
       tags.push('secret_config');
       evidence.push('Application configuration or secret property modified');
