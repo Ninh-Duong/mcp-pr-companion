@@ -8,7 +8,7 @@ Bạn có thể dùng theo 3 cách:
 |---|---|---|
 | **Menu trong terminal** | `.\run.cmd cmd` | Xem danh sách PR của bạn, chọn PR để tạo context |
 | **Chạy 1 lệnh tự động** | `.\run.cmd generate-all` | Tạo context cho **tất cả** PR đang mở của bạn trong mọi repo khai báo, không cần thao tác |
-| **MCP server** | `.\run.cmd` | Để AI trong IDE tự gọi lấy context PR |
+| **MCP server** | `.\run.cmd` | Để AI trong IDE tự gọi lấy context PR (trực tiếp hoặc qua [mcp-hub](docs/HUB_INTEGRATION.md)) |
 
 ---
 
@@ -86,15 +86,16 @@ Chạy lại `.\run.cmd check`. Thấy toàn dấu ✓ là xong:
 ### Kết quả nằm ở đâu?
 
 ```text
-ai-context/siliconstack/<workspace>/<repo>/pr_<số PR>/
-├── context.md      ← MỞ FILE NÀY TRƯỚC: tóm tắt PR + gợi ý nên đọc file nào
+ai-context/[<AI_CONTEXT_COMPANY>/]<workspace>/<repo>/pr_<số PR>/
+├── context.md      ← MỞ FILE NÀY TRƯỚC: tóm tắt PR + "Read next" (nên đọc file nào)
 ├── files.md        ← danh sách tất cả file thay đổi
 ├── files/          ← chi tiết từng file (file_0001.md, file_0002.md…)
 ├── manifest.json   ← dữ liệu dạng JSON
-└── revisions/      ← lịch sử các lần tạo
+├── current.json    ← revision đang dùng
+└── revisions/      ← 5 lần tạo gần nhất
 ```
 
-Log chạy nằm trong `Logs/<ngày>/`.
+Log: menu/generate-all ghi vào `Logs/<ngày>/`, MCP server ghi vào `Logs/mcp-server.log`.
 
 ---
 
@@ -107,7 +108,7 @@ Thêm vào file cấu hình MCP của IDE (Claude Code, Cursor, VS Code…), s�
   "mcpServers": {
     "mcp-pr-companion": {
       "command": "node",
-      "args": ["D:/Visual Studio Code/mcp-pr-companion/bin/cli.js"]
+      "args": ["D:/Visual Studio Code/mcp-pr-companion/bin/cli.js", "server"]
     }
   }
 }
@@ -115,17 +116,17 @@ Thêm vào file cấu hình MCP của IDE (Claude Code, Cursor, VS Code…), s�
 
 Sau đó chỉ cần đưa link PR cho AI, ví dụ: *"Tóm tắt PR https://bitbucket.org/siliconstack/wec.be/pull-requests/4565"*.
 
-Các tool AI có thể gọi:
+Các tool AI có thể gọi (qua mcp-hub tên sẽ có tiền tố `pr__`, vd `pr__get_pr_context_pack`):
 
 | Tool | Tác dụng |
 |---|---|
-| `get_pr_context_pack` | Lấy bản tóm tắt PR (`context.md`). **Dùng cái này trước** |
-| `get_pr_file_context` | Xem chi tiết 1 file thay đổi (vd `file_0001`) |
-| `get_pr_file_changes` | Lấy diff của 1 file |
-| `search_pr_files` | Tìm file theo đường dẫn, ngôn ngữ, mức rủi ro… |
-| `get_pr_manifest` | Lấy dữ liệu PR dạng JSON |
-| `get_pr_sync_status` | Xem PR đã có dữ liệu chưa |
-| `refresh_pr_data` | Tải lại PR mới nhất từ Bitbucket |
+| `get_pr_context_pack` | Lấy bản tóm tắt PR (`context.md`). **Luôn gọi cái này trước.** Tự tải PR từ Bitbucket nếu chưa có hoặc PR có commit mới; `refresh: true` để ép tải lại |
+| `search_pr_files` | Tìm file theo đường dẫn, ngôn ngữ, trạng thái, loại thay đổi, mức rủi ro |
+| `get_pr_file_context` | Xem chi tiết + diff của 1 file (vd `file_0001`), chia trang bằng `offset` / `max_chars` |
+| `get_pr_file_changes` | Phân loại, rủi ro, symbol của 1 file dạng JSON (kèm 1 trang diff) |
+| `get_pr_sync_status` | Xem PR đã có dữ liệu ở máy chưa (không gọi Bitbucket) |
+
+Muốn dùng qua **mcp-hub** (một MCP gom nhiều MCP con): xem [docs/HUB_INTEGRATION.md](docs/HUB_INTEGRATION.md).
 
 ---
 
@@ -143,6 +144,7 @@ Mọi cấu hình nằm trong file `.env`. Danh sách đầy đủ có trong `.e
 | `TICKET_PREFIXES` | | Tiền tố mã ticket, mặc định `WCE-,PROJ-,JIRA-` |
 | `PRIVACY_*` | | Mức ẩn thông tin trong kết quả (mặc định đã an toàn) |
 | `AI_CONTEXT_ROOT` | | Thư mục lưu kết quả, mặc định `ai-context` |
+| `AI_CONTEXT_COMPANY` | | Thêm 1 cấp thư mục (vd tên công ty) trước `<workspace>`. Để trống = không thêm |
 
 ### 🔒 Bảo mật
 
@@ -215,3 +217,13 @@ npm test         # chạy toàn bộ test (trong thư mục tạm, không đụn
 - `run.cmd` / `run.sh`: kiểm tra và tự cài Node.js.
 - `bin/cli.js`: kiểm tra thư viện, build và `.env`, sau đó khởi động app.
 - `src/`: mã nguồn. `tests/`: test.
+
+Tài liệu cho developer và AI agent (tiếng Anh):
+
+| File | Nội dung |
+|---|---|
+| [AGENTS.md](AGENTS.md) | **Quy tắc bắt buộc** cho AI agent sửa repo này: invariant, code map, tool reference, definition of done |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Pipeline, cấu trúc thư mục kết quả, ghi atomic, kiểm tra PR mới |
+| [docs/STANDARDS.md](docs/STANDARDS.md) | Chuẩn code, contract của tool, contract bảo mật dữ liệu |
+| [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) | Vì sao dùng từng thư viện, thư viện nào cố ý không dùng |
+| [docs/HUB_INTEGRATION.md](docs/HUB_INTEGRATION.md) | Chạy như MCP con của mcp-hub |
