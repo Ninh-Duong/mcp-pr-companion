@@ -37,6 +37,7 @@
 | Author | Dropped unless `PRIVACY_REMOVE_AUTHOR=false` | `BitbucketAllowlistProjector` |
 | File paths | `PRIVACY_FILE_PATH_MODE`: `sanitized` (`first/.../last/two`, the default), `basename`, `opaque` (`file_NNNN`) or `full`. Applied to the index, file Markdown and diff headers. | `PathSanitizer`, `DataStore.saveRevision` |
 | Sensitive files (`.env`, keys, …) | Flagged high risk with `sensitive_configuration` | `SensitiveFilePolicy` |
+| PR comments | Same as PR text (`PIISanitizer` + `SecretScanner`). Author only when `PRIVACY_REMOVE_AUTHOR=false`. Inline paths per `PRIVACY_FILE_PATH_MODE` (omitted in `opaque`). Deleted comments dropped. | `PRContextService.getComments` |
 | CLI logs | Additionally strip emails, UUIDs and `workspace/repo` | `LogRedactor` |
 | Credentials | Exist only in env and memory. Never written to disk, logged or echoed. | `ConfigManager`, `bin/cli.js` |
 
@@ -44,10 +45,10 @@ When you add a new field to the output, decide which row applies **before** writ
 
 ## 5. Error handling and resilience
 
-- HTTP timeouts: 30 s for JSON requests and each page, 45 s for the raw diff (`BitbucketClient`, `PaginationHelper`).
+- Every request goes through `fetchWithRetry` (`src/core/bitbucket/http.ts`). Timeouts are per attempt: 30 s for JSON requests and each page, 45 s for the raw diff.
 - Pagination follows `next` only on the same origin (the auth header never goes to another host), up to 50 pages for collection and 10 for discovery.
 - A failing commits, diffstat or diff request degrades `coverage` to `partial`/`failed` with a warning; a failing metadata request fails the sync.
-- No retries. Bitbucket rate limits are per user, and agents can call again.
+- Retries: at most 2, only on 429/502/503/504, waiting `Retry-After` (capped at 10 s) or 1 s, then 3 s. Never on 4xx auth/permission errors. Do not add retries anywhere else.
 - Logging never throws (`Logger`, `FileLogger` swallow write errors).
 
 ## 6. Testing
