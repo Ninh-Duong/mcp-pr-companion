@@ -1,7 +1,7 @@
 {
   "name": "mcp-pr-companion",
   "version": "1.0.0",
-  "description": "Local MCP Server for pre-processing Git PR diffs into compact JSON payloads for AI PR description generation",
+  "description": "Read-only MCP server (stdio) that turns Bitbucket Cloud pull requests into privacy-sanitized, paged context for AI agents",
   "main": "dist/mcp/server.js",
   "bin": {
     "mcp-pr-companion": "bin/cli.js"
@@ -16,17 +16,17 @@
     "mcp-pr-companion": "node bin/cli.js generate-all",
     "healthcheck": "node bin/cli.js check",
     "prepare-app": "node bin/cli.js prepare",
-    "build": "tsc",
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc",
     "dev": "tsx --env-file=.env src/mcp/server.ts",
     "test": "node tests/run.mjs"
   },
   "keywords": [
     "mcp",
-    "git",
-    "pr-description",
+    "mcp-server",
     "bitbucket",
-    "github",
-    "ast"
+    "pull-request",
+    "code-review",
+    "ai-agent"
   ],
   "author": "Ninh Duong",
   "license": "MIT",

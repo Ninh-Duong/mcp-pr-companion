@@ -29,6 +29,12 @@ export class BitbucketClient {
     return PaginationHelper.fetchAllPages(url, this.headers, options);
   }
 
+  /** Every page of a pull request listing (q is a Bitbucket query, e.g. state="OPEN"), newest first. */
+  async listPullRequests(workspace: string, repoSlug: string, q: string, options: BitbucketFetchOptions = {}): Promise<PaginatedResult<any>> {
+    const url = `https://api.bitbucket.org/2.0/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/pullrequests?q=${encodeURIComponent(q)}&sort=-updated_on&pagelen=50`;
+    return PaginationHelper.fetchAllPages(url, this.headers, { ...options, maxPages: 10 });
+  }
+
   async getPRDiffText(workspace: string, repoSlug: string, prId: number, options: BitbucketFetchOptions = {}): Promise<string> {
     const url = `https://api.bitbucket.org/2.0/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/pullrequests/${prId}/diff`;
     const controller = new AbortController();

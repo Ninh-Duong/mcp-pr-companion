@@ -180,7 +180,6 @@ export class PRListScreen {
             [selectedPr],
             1,
             true,
-            'overwrite',
             (progress) => GenerationProgressRenderer.render(progress)
           );
           console.log(`\nSync ${result.failed > 0 ? 'failed' : 'complete'} for PR #${selectedPr.id}. Log: ${result.logFilePath}\n`);

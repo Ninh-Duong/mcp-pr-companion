@@ -14,7 +14,6 @@ export class GenerationManager {
     prs: DiscoveredPR[],
     maxConcurrency = 2,
     forceRefresh = false,
-    strategy: 'overwrite' | 'new_version' = 'overwrite',
     onProgress?: (progress: BatchGenerationProgress) => void
   ): Promise<{
     total: number;
@@ -91,7 +90,6 @@ export class GenerationManager {
           pr.id,
           pr.title,
           forceRefresh,
-          strategy,
           (jobState) => {
             jobsMap.set(pr.id, jobState);
             notifyProgress();

@@ -27,10 +27,4 @@ export class OpaqueIDGenerator {
     const hash = crypto.createHash('sha256').update(input).digest('hex').substring(0, 8);
     return `repo_${hash}`;
   }
-
-  static getRevisionID(sourceHash: string, destinationHash: string, schemaVersion = '3.0'): string {
-    const input = `${sourceHash}:${destinationHash}:${schemaVersion}`;
-    const hash = crypto.createHash('sha256').update(input).digest('hex').substring(0, 12);
-    return `rev_${hash}`;
-  }
 }

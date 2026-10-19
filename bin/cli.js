@@ -35,7 +35,19 @@ const BUILD_STAMP = path.join(root, 'dist', '.build-stamp');
 const ENV_FILE = path.join(root, '.env');
 const ENV_EXAMPLE = path.join(root, '.env.example');
 
-const log = msg => process.stderr.write(`[mcp-pr-companion] ${msg}\n`);
+// Also appended to Logs/mcp-server.log: mcp-hub discards a child's stderr, so startup failures
+// (missing .env, failed build) would otherwise be invisible.
+const LOG_FILE = path.join(root, 'Logs', 'mcp-server.log');
+const log = msg => {
+  const line = `[mcp-pr-companion] ${msg}\n`;
+  process.stderr.write(line);
+  try {
+    fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
+    fs.appendFileSync(LOG_FILE, `[LAUNCHER] ${new Date().toISOString()} - ${msg}\n`);
+  } catch {
+    // Logging must never stop the launcher.
+  }
+};
 
 function sha256(...files) {
   const hash = crypto.createHash('sha256');

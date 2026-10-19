@@ -9,7 +9,6 @@ export interface GenerateAllOptions {
   readiness?: PRReadinessFilter;
   forceRefresh?: boolean;
   concurrency?: number;
-  strategy?: 'overwrite' | 'new_version';
   onProgress?: (progress: BatchGenerationProgress) => void;
 }
 
@@ -31,7 +30,6 @@ export class GenerateAllService {
     const readiness = options.readiness || 'all';
     const forceRefresh = options.forceRefresh ?? false;
     const concurrency = options.concurrency ?? 2;
-    const strategy = options.strategy || 'overwrite';
 
     const prs = await PRDiscoveryService.discoverOpenPRs(
       session.email,
@@ -63,7 +61,6 @@ export class GenerateAllService {
       filteredPRs,
       concurrency,
       forceRefresh,
-      strategy,
       options.onProgress
     );
 

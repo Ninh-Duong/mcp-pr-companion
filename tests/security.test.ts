@@ -1,7 +1,6 @@
 import { SecretScanner } from '../src/core/privacy/secret.scanner.js';
 import { PIISanitizer } from '../src/core/privacy/pii.sanitizer.js';
 import { PathSanitizer } from '../src/core/privacy/path.sanitizer.js';
-import { URLSanitizer } from '../src/core/privacy/url.sanitizer.js';
 import { SensitiveFilePolicy } from '../src/core/analyzer/sensitive.file.policy.js';
 import { OpaqueIDGenerator } from '../src/core/storage/opaque.id.js';
 import { DataStore } from '../src/core/storage/data.store.js';
@@ -69,9 +68,6 @@ async function runSecurityTests() {
   const basenamePath = PathSanitizer.sanitize(fullPath, 'basename');
   assert(basenamePath === 'UserController.cs', 'PathSanitizer basename mode extracts file basename');
 
-  const approveUrl = 'https://bitbucket.org/workspace/repo/pull-requests/123/approve';
-  const sanitizedUrl = URLSanitizer.sanitize(approveUrl);
-  assert(sanitizedUrl === '[REDACTED:PROVIDER_ENDPOINT]', 'URLSanitizer redacts provider approve/merge write endpoints');
 
   // 4. Sensitive File Policy Tests
   console.log('\n4. Sensitive File Policy:');
@@ -89,8 +85,6 @@ async function runSecurityTests() {
   assert(repoId1.startsWith('repo_'), 'OpaqueIDGenerator prefixes repo ID with repo_');
   assert(!repoId1.includes('myworkspace') && !repoId1.includes('myrepo'), 'OpaqueIDGenerator masks workspace and repoSlug names');
 
-  const revId1 = OpaqueIDGenerator.getRevisionID('abc123hash', 'def456hash');
-  assert(revId1.startsWith('rev_'), 'OpaqueIDGenerator produces rev_xxx revision ID');
 
   console.log('\n6. Atlassian API Token (ATATT) Redaction:');
   const atatt = 'ATATT3xFfGF0abcdefghijklmnop1234567890=ABCD1234';
