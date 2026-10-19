@@ -38,6 +38,7 @@ try {
   send({ id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '0' } } });
   const init = await waitFor(1);
   assert.match(init.result.instructions, /get_pr_context_pack/);
+  assert.ok(init.result.instructions.length < 1500, 'instructions stay well under the 4096-char client limit');
   send({ method: 'notifications/initialized' });
 
   send({ id: 2, method: 'tools/list' });
