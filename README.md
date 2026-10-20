@@ -123,12 +123,12 @@ Các tool AI có thể gọi (qua mcp-hub tên sẽ có tiền tố `pr__`, vd `
 
 | Tool | Tác dụng |
 |---|---|
-| `get_pr_context_pack` | Lấy bản tóm tắt PR (`context.md`). **Luôn gọi cái này trước.** Tự tải PR từ Bitbucket nếu chưa có hoặc PR có commit mới; `refresh: true` để ép tải lại |
+| `get_pr_context_pack` | Lấy bản tóm tắt PR (`context.md`): file nên đọc trước, mức rủi ro kèm lý do, commit, số người approve / yêu cầu sửa, trạng thái build, và các thread review đang mở theo từng file (3 phần sau lấy live, không lưu). **Luôn gọi cái này trước.** Tự tải PR từ Bitbucket nếu chưa có hoặc PR có commit mới; `refresh: true` để ép tải lại |
 | `search_pr_files` | Tìm file theo đường dẫn, ngôn ngữ, trạng thái, loại thay đổi, mức rủi ro |
 | `get_pr_file_context` | Xem chi tiết + diff của 1 file (vd `file_0001`), chia trang bằng `offset` / `max_chars` |
 | `get_pr_file_changes` | Phân loại, rủi ro, symbol của 1 file dạng JSON (kèm 1 trang diff) |
 | `get_pr_sync_status` | Xem PR đã có dữ liệu ở máy chưa (chỉ gọi Bitbucket để kiểm tra quyền đọc repo, không tải PR) |
-| `get_pr_comments` | Đọc comment review của PR (cả comment inline, kèm `file_id`), đã che thông tin nhạy cảm; `include_resolved: false` để chỉ lấy thread chưa resolve |
+| `get_pr_comments` | Đọc comment review của PR (cả comment inline, kèm `file_id`), đã che thông tin nhạy cảm; `author_kind` cho biết comment của app (bot) hay người; `include_resolved: false` để chỉ lấy thread chưa resolve |
 | `list_my_open_prs` | Liệt kê PR đang mở của bạn (theo `BITBUCKET_REPOSITORY` hoặc 1 repo) kèm sẵn `pr_url` |
 | `sync_my_open_prs` | Sync **toàn bộ PR đang mở của bạn** trong 1 repo (hoặc mọi repo trong `BITBUCKET_REPOSITORY`) rồi trả về danh sách PR: trạng thái, ticket, mức rủi ro. PR không có commit mới thì bỏ qua |
 | `check_bitbucket_connection` | Kiểm tra email/token trong `.env` có kết nối được Bitbucket không |

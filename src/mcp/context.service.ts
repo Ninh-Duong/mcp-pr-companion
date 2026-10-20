@@ -30,7 +30,9 @@ export interface FileFilters {
   limit: number;
 }
 
-const NOT_SYNCED = 'PR is not synced yet. Call get_pr_context_pack for this pr_url first.';
+type Head = Awaited<ReturnType<BitbucketCollector['getHeadCommits']>>;
+
+const NOT_SYNCED ='PR is not synced yet. Call get_pr_context_pack for this pr_url first.';
 
 /**
  * MCP-facing reads over the on-disk revision store (the single source of truth: no RAM cache).
@@ -66,7 +68,7 @@ export class PRContextService {
    * Re-syncs when there is no local revision, on refresh, or when the PR's source/target commits
    * moved since the last sync. The note explains a cached answer when freshness could not be checked.
    */
-  static async ensureFresh(pr: ParsedPRUrl, refresh: boolean): Promise<{ status: 'synced' | 'unchanged' | 'offline'; note: string | null }> {
+  static async ensureFresh(pr: ParsedPRUrl, refresh: boolean): Promise<{ status: 'synced' | 'unchanged' | 'offline'; note: string | null; head?: Head }> {
     // Outside the try: missing credentials, ALLOWED_EMAILS denial or no repository access must fail the call.
     const collector = new BitbucketCollector();
     await AccessGate.unlock(pr.workspace, pr.repoSlug);
@@ -76,7 +78,7 @@ export class PRContextService {
       return { status: 'synced', note: null };
     }
 
-    let head: { source: string; destination: string };
+    let head: Head;
     try {
       head = await collector.getHeadCommits(pr.workspace, pr.repoSlug, pr.prId);
     } catch (err) {
@@ -85,18 +87,19 @@ export class PRContextService {
     }
     if (head.source !== active.current.source_commit || head.destination !== active.current.target_commit) {
       await this.sync(pr, collector);
-      return { status: 'synced', note: null };
+      return { status: 'synced', note: null, head };
     }
-    return { status: 'unchanged', note: null };
+    return { status: 'unchanged', note: null, head };
   }
 
   static async getContextPack(prUrl: string, refresh: boolean, includeFileTable: boolean): Promise<string> {
     const pr = PRRegistry.parseAndValidateUrl(prUrl);
-    const { note } = await this.ensureFresh(pr, refresh);
+    const { note, head } = await this.ensureFresh(pr, refresh);
     const context = OutputReader.getContextPack(pr.workspace, pr.repoSlug, pr.prId);
     if (!context) throw new Error('Context pack generation failed: context.md was not written.');
 
-    const parts = [note, context];
+    // Approvals, builds and comments change without new commits, so they are summarized live and never stored.
+    const parts = [note, context, await this.reviewStatusSection(pr, head), await this.reviewThreadsSection(pr)];
     if (includeFileTable) parts.push(OutputReader.getFilesSummary(pr.workspace, pr.repoSlug, pr.prId));
     return parts.filter(Boolean).join('\n\n---\n\n');
   }
@@ -151,6 +154,99 @@ export class PRContextService {
    */
   static async getComments(prUrl: string, opts: { offset: number; limit: number; include_resolved: boolean }) {
     const pr = PRRegistry.parseAndValidateUrl(prUrl);
+    const { comments: all, complete } = await this.fetchComments(pr);
+    const comments = all.filter(c => opts.include_resolved || !c.resolved);
+    const page = comments.slice(opts.offset, opts.offset + opts.limit);
+    const end = opts.offset + page.length;
+    return { total: comments.length, complete, comments: page, next_offset: end < comments.length ? end : null };
+  }
+
+  /**
+   * "## Review status (live)" for the context pack: approval counts (never names) and the latest build status per
+   * pipeline. Each half fails on its own into "unavailable (…)"; the pack is never lost to it.
+   */
+  private static async reviewStatusSection(pr: ParsedPRUrl, head?: Head): Promise<string> {
+    const lines = ['## Review status (live)'];
+    const reason = (err: unknown) => SecretScanner.scanAndRedact(err instanceof Error ? err.message : String(err));
+    const collector = new BitbucketCollector();
+    try {
+      head ??= await collector.getHeadCommits(pr.workspace, pr.repoSlug, pr.prId);
+      const ps = head.participants;
+      const count = (f: (p: any) => boolean) => ps.filter(f).length;
+      lines.push(`Approvals: ${count(p => p.approved)} · Changes requested: ${count(p => p.state === 'changes_requested')} · Participants: ${ps.length} (reviewers: ${count(p => p.role === 'REVIEWER')})`);
+    } catch (err) {
+      lines.push(`Approvals: unavailable (${reason(err)})`);
+    }
+    try {
+      const res = await collector.getStatuses(pr.workspace, pr.repoSlug, pr.prId);
+      // Pagination reports HTTP failures as warnings, not exceptions.
+      if (!res.isComplete && res.values.length === 0) throw new Error(res.warnings[0] ?? 'statuses could not be fetched');
+      // Re-runs report under the same key: keep only the newest per pipeline.
+      const latest = new Map<string, any>();
+      for (const s of res.values) {
+        const prev = latest.get(s.key);
+        if (!prev || String(s.updated_on) > String(prev.updated_on)) latest.set(s.key, s);
+      }
+      const statuses = [...latest.values()];
+      if (statuses.length === 0) {
+        lines.push('Build: no status reported');
+      } else {
+        const n = (state: string) => statuses.filter(s => s.state === state).length;
+        lines.push(`Build: ${n('FAILED') + n('STOPPED')} failed, ${n('SUCCESSFUL')} passed, ${n('INPROGRESS')} running`);
+        const order = ['FAILED', 'STOPPED', 'INPROGRESS', 'SUCCESSFUL'];
+        const clean = (t: unknown) => SecretScanner.scanAndRedact(PIISanitizer.sanitizeText(String(t ?? ''))).replace(/\s+/g, ' ').trim();
+        for (const s of statuses.sort((a, b) => order.indexOf(a.state) - order.indexOf(b.state)).slice(0, 5)) {
+          const desc = clean(s.description);
+          // Metadata carries a 12-char source hash, statuses the full one.
+          const stale = head && s.commit?.hash && !String(s.commit.hash).startsWith(head.source) ? ' (older commit)' : '';
+          lines.push(`- ${s.state} ${clean(s.name)}${stale}${desc ? `: ${desc.length > 100 ? `${desc.slice(0, 100)}…` : desc}` : ''}`);
+        }
+      }
+    } catch (err) {
+      lines.push(`Build: unavailable (${reason(err)})`);
+    }
+    return lines.join('\n');
+  }
+
+  /**
+   * "## Review threads (live)" for the context pack: open top-level threads by file id, at most 10 lines.
+   * Never throws: a comments outage must not cost the agent the pack.
+   */
+  private static async reviewThreadsSection(pr: ParsedPRUrl): Promise<string> {
+    const title = '## Review threads (live)';
+    try {
+      const res = await this.fetchComments(pr);
+      // Pagination reports HTTP failures as warnings, not exceptions.
+      if (!res.complete && res.comments.length === 0) throw new Error(res.warnings[0] ?? 'comments could not be fetched');
+      const threads = res.comments.filter(c => c.parent_id === null);
+      const open = threads.filter(c => !c.resolved);
+      const fromApps = (cs: typeof open) => cs.filter(c => c.author_kind === 'app').length;
+      const appNote = (cs: typeof open) => (fromApps(cs) > 0 ? `${fromApps(cs)} from apps` : '');
+      const lines = [title, `Open: ${open.length}${appNote(open) ? ` (${appNote(open)})` : ''} · Resolved: ${threads.length - open.length}${res.complete ? '' : ' (incomplete: some comment pages failed)'}`];
+      // One line per file (file ids in order), general threads last: bot summaries must not crowd out file threads.
+      const byWhere = new Map<string, typeof open>();
+      for (const c of open) {
+        const where = c.file_id ?? c.path ?? 'general';
+        byWhere.set(where, [...(byWhere.get(where) ?? []), c]);
+      }
+      const groups = [...byWhere].sort(([a], [b]) => (a === 'general' ? 1 : b === 'general' ? -1 : a < b ? -1 : a > b ? 1 : 0));
+      const MAX = 10;
+      for (const [where, cs] of groups.slice(0, MAX)) {
+        const at = [...new Set(cs.map(c => c.line).filter(Boolean))];
+        const text = cs[0].text.replace(/\*\*|__|`|#+ /g, '').replace(/\s+/g, ' ').trim();
+        const details = [`${cs.length} open`, appNote(cs), at.length > 0 ? `line ${at.join(', ')}` : ''].filter(Boolean).join(', ');
+        lines.push(`- ${where} (${details}): ${text.length > 120 ? `${text.slice(0, 120)}…` : text}`);
+      }
+      if (groups.length > MAX) lines.push(`- … ${groups.length - MAX} more files`);
+      if (open.length > 0) lines.push('Full text: get_pr_comments(pr_url, include_resolved=false)');
+      return lines.join('\n');
+    } catch (err) {
+      return `${title}\nUnavailable: ${SecretScanner.scanAndRedact(err instanceof Error ? err.message : String(err))}`;
+    }
+  }
+
+  /** Every non-deleted comment, sanitized, oldest first; inline ones carry the local file id when the PR is synced. */
+  private static async fetchComments(pr: ParsedPRUrl) {
     const res = await new BitbucketCollector().getComments(pr.workspace, pr.repoSlug, pr.prId);
     await AccessGate.unlock(pr.workspace, pr.repoSlug); // to map inline comments onto the encrypted file index
     const { privacy } = ConfigManager.loadBase();
@@ -160,7 +256,7 @@ export class PRContextService {
 
     const clean = (text: string) => SecretScanner.scanAndRedact(PIISanitizer.sanitizeText(text));
     const comments = res.values
-      .filter((c: any) => !c.deleted && (opts.include_resolved || !c.resolution))
+      .filter((c: any) => !c.deleted)
       .sort((a: any, b: any) => a.id - b.id)
       .map((c: any) => {
         const inline = c.inline?.path && privacy.file_path_mode !== 'opaque'
@@ -173,13 +269,12 @@ export class PRContextService {
           resolved: Boolean(c.resolution),
           created_on: c.created_on,
           ...(privacy.remove_author ? {} : { author: PIISanitizer.sanitizeAuthor(c.user, false)?.display_name }),
+          // Bitbucket's account type, not a name: lets an agent weigh bot output against human review.
+          author_kind: (c.user?.type === 'app_user' ? 'app' : 'person') as 'app' | 'person',
           text: clean(c.content?.raw ?? '')
         };
       });
-
-    const page = comments.slice(opts.offset, opts.offset + opts.limit);
-    const end = opts.offset + page.length;
-    return { total: comments.length, complete: res.isComplete, comments: page, next_offset: end < comments.length ? end : null };
+    return { comments, complete: res.isComplete, warnings: res.warnings };
   }
 
   /** Open PRs authored by the token's account, in one repository or every BITBUCKET_REPOSITORY entry. */

@@ -43,7 +43,9 @@ export class TextNormalizer {
       parts.push(cleaned);
     }
 
-    const result = parts.join('');
+    const joined = parts.join('');
+    const result = joined.trimEnd();
+    if (result !== joined) modified = true;
     return {
       text: result,
       isNormalized: modified
@@ -53,7 +55,9 @@ export class TextNormalizer {
   private static cleanPlainText(text: string): string {
     // Strip redundant \( and \) when they are escaped parentheses rather than math expressions
     // E.g. "thêm mới (CRC)" vs "\(CRC\)"
-    let cleaned = text.replace(/\\([()])/g, '$1');
+    let cleaned = text.replace(/\\([()[\]])/g, '$1');
+    // Zero-width characters Bitbucket's editor leaves behind (U+200B-U+200D, BOM)
+    cleaned = cleaned.replace(/[​-‍﻿]/g, '');
     // Normalize repeated newlines
     cleaned = cleaned.replace(/\r\n/g, '\n');
     return cleaned;

@@ -5,6 +5,7 @@ export type ChangeKind =
   | 'comment_only'
   | 'whitespace_only'
   | 'formatting_only'
+  | 'rename_only'
   | 'test_only'
   | 'documentation_only'
   | 'generated_only'
@@ -41,7 +42,7 @@ export class ChangeClassifier {
     if (fileDiff.additions === 0 && fileDiff.deletions === 0) {
       if (fileDiff.status === 'renamed' || fileDiff.status === 'copied') {
         return {
-          kind: 'formatting_only',
+          kind: 'rename_only',
           functionalChange: false,
           confidence: 1.0,
           evidence: [`File ${fileDiff.status} with 0 line changes`]
@@ -93,7 +94,9 @@ export class ChangeClassifier {
       basename.endsWith('.props') ||
       basename.endsWith('.targets')
     ) {
-      const isDepLock = basename.includes('lock') || basename === 'package.json';
+      // A .csproj/.props edit is a dependency change only when it touches package references.
+      const touchesPackages = fileDiff.hunks.some(h => h.lines.some(l => l.type !== 'context' && /<Package(Reference|Version)\b/.test(l.content)));
+      const isDepLock = basename.includes('lock') || basename === 'package.json' || touchesPackages;
       return {
         kind: isDepLock ? 'dependency_change' : 'configuration',
         functionalChange: true,

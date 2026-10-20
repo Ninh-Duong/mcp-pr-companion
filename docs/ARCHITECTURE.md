@@ -32,9 +32,9 @@ The MCP server and the CLI share one pipeline and one on-disk store. Neither kee
 | 1. Collect | `BitbucketCollector.collect` | Metadata first (it fails hard if this fails), then commits, diffstat and raw diff in parallel. Partial failures become `coverage` entries and `warnings`, not exceptions. |
 | 2. Project | `BitbucketAllowlistProjector` | Keeps only the allowlisted fields. The author is dropped when `PRIVACY_REMOVE_AUTHOR`; commit subjects are capped by `PRIVACY_MAX_COMMIT_SUBJECTS`. |
 | 3. Sanitize | `PIISanitizer`, `SecretScanner`, `PathSanitizer` | Emails and account UUIDs in title, description and commits. Secrets in all text and every patch. Paths per `PRIVACY_FILE_PATH_MODE`, including diff header lines. |
-| 4. Analyze | `DiffParser` → `ChangeClassifier` → `RiskAnalyzer` → `SymbolExtractor` | Per file: change kind, risk level/tags/evidence, touched symbols (regex heuristics, not an AST). |
-| 5. Summarize | `DataStore.saveRevision` | Manifest (change and risk summary, ticket id from `TICKET_PREFIXES`), file index, per-file `change.json` and `patch.diff`, coverage. |
-| 6. Read Strategy | `ContextModeClassifier` | Picks `skim` / `standard` / `inspect_priority_files` / `deep_review`, the files to read next and a token budget. |
+| 4. Analyze | `DiffParser` → `ChangeClassifier` → `RiskAnalyzer` → `SymbolExtractor` | Per file: change kind, risk level/tags/evidence, touched symbols (regex heuristics, not an AST): C# members of any access level, SQL objects, and the enclosing scope git writes after `@@`. SQL tables/indexes/constraints are `database_schema` (high); views/procedures/functions/triggers are `database_object` (medium). |
+| 5. Summarize | `DataStore.saveRevision` | Manifest (change and risk summary, ticket id from `TICKET_PREFIXES`), file index, per-file `change.json` and `patch.diff`, coverage. The PR's risk level is the highest file level; `risk_summary.reasons` names the files behind each tag. `stats.commits_count` is every commit; `commits.jsonl` keeps the newest `PRIVACY_MAX_COMMIT_SUBJECTS` non-merge ones. |
+| 6. Read Strategy | `ContextModeClassifier` | Picks `skim` / `standard` / `inspect_priority_files` / `deep_review` and a token budget. Files are ranked by `ContextModeClassifier.score` (change size capped at 200, risk tags, new logic); `public_api` / `auth_security` / `database_schema` files are always in Read next; tests, renames, docs and formatting go to `low_priority` by id. `files.md` uses the same order. |
 | 7. Persist | `RevisionWriter.writeRevision` | See §4. |
 
 ## 3. On-disk layout (frozen: AGENTS.md invariant 7)
@@ -97,7 +97,7 @@ sequenceDiagram
 
 - `PRContextService.sync` keeps one in-flight promise per PR, so parallel calls (refresh or not) share a fetch.
 - File tools never download PR data. Like every tool, they first pass the repository access check (`AccessGate.unlock`: one Bitbucket request per repository, cached 60 s), then read the revision that `get_pr_context_pack` or `sync_my_open_prs` last made current.
-- `get_pr_comments` and `list_my_open_prs` always fetch live and store nothing: comments change without new commits, so a commit-hash freshness check cannot cover them.
+- `get_pr_comments` and `list_my_open_prs` always fetch live and store nothing: comments change without new commits, so a commit-hash freshness check cannot cover them. For the same reason `get_pr_context_pack` appends `## Review status (live)` (approval counts from the metadata it already fetched, latest build status per pipeline key) and `## Review threads (live)` at read time instead of storing them in `context.md`. Neither carries a person's name; comments only say whether the account is a Bitbucket app.
 - Re-review: when a sync replaces a *different* revision, `DataStore.saveRevision` compares the files against the active revision (by sanitized path and patch content) and stores `changes_since_previous` in the manifest. `context.md` renders it as "Changed since last sync".
 - Transient errors (429/502/503/504) are retried up to twice inside `fetchWithRetry`.
 - Missing credentials or an `ALLOWED_EMAILS` denial fail the call, even when cached data exists.

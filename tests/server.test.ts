@@ -30,6 +30,8 @@ const diffText = (n: number) =>
 let sourceHash = 'aaaaaaaaaaaa';
 let userStatus = 200;
 let repoStatus = 200;
+let commentsStatus = 200;
+let statusesStatus = 200;
 const calls: Record<string, number> = { metadata: 0, diff: 0 };
 globalThis.fetch = (async (input: string | URL) => {
   const url = String(input);
@@ -49,13 +51,26 @@ globalThis.fetch = (async (input: string | URL) => {
       state: 'OPEN',
       draft: true,
       source: { branch: { name: 'feature/WCE-12-export' }, commit: { hash: sourceHash } },
-      destination: { branch: { name: 'main' }, commit: { hash: 'bbbbbbbbbbbb' } }
+      destination: { branch: { name: 'main' }, commit: { hash: 'bbbbbbbbbbbb' } },
+      participants: [
+        { role: 'REVIEWER', approved: true, state: 'approved', user: { type: 'user', display_name: 'Alice Approver' } },
+        { role: 'PARTICIPANT', approved: false, state: 'changes_requested', user: { type: 'app_user', display_name: 'Bot Requester' } }
+      ]
     });
   }
+  if (url.includes('/pullrequests/7/statuses')) {
+    if (statusesStatus !== 200) return new Response('{}', { status: statusesStatus, statusText: 'Internal Server Error' });
+    return ok({ values: [
+      { key: 'build', name: 'Pipeline #12', state: 'SUCCESSFUL', updated_on: '2026-01-01T00:00:00Z', commit: { hash: sourceHash } },
+      { key: 'build', name: 'Pipeline #13', state: 'FAILED', description: '2 tests failed, ask qa@example.com', updated_on: '2026-01-02T00:00:00Z', commit: { hash: sourceHash } },
+      { key: 'lint', name: 'Lint', state: 'SUCCESSFUL', updated_on: '2026-01-01T00:00:00Z', commit: { hash: '999999999999' } }
+    ] });
+  }
   if (url.includes('/pullrequests/7/comments')) {
+    if (commentsStatus !== 200) return new Response('{}', { status: commentsStatus, statusText: 'Internal Server Error' });
     return ok({ values: [
       { id: 3, parent: { id: 1 }, content: { raw: 'done, token ATATT3xFfGF0abcdefghijklmnop0123' }, resolution: { type: 'resolved' }, created_on: '2026-01-02' },
-      { id: 1, content: { raw: 'Please rename this, ping dev@example.com' }, user: { display_name: 'Reviewer' }, created_on: '2026-01-01', inline: { path: REAL_PATH, to: 10 } },
+      { id: 1, content: { raw: 'Please rename this, ping dev@example.com' }, user: { type: 'app_user', display_name: 'Reviewer' }, created_on: '2026-01-01', inline: { path: REAL_PATH, to: 10 } },
       { id: 2, deleted: true, content: { raw: 'gone' } }
     ] });
   }
@@ -63,7 +78,14 @@ globalThis.fetch = (async (input: string | URL) => {
     return ok({ values: [{ id: 7, title: 'Add invoice export endpoint', state: 'OPEN', author: { uuid: '{u}' }, updated_on: '2026-01-03',
       source: { branch: { name: 'feature/WCE-12-export' }, commit: { hash: sourceHash } }, destination: { branch: { name: 'main' }, commit: { hash: 'bbbbbbbbbbbb' } } }] });
   }
-  if (url.includes('/commits')) return ok({ values: [{ hash: sourceHash + 'ffff', message: 'WCE-12 export invoices' }] });
+  if (url.includes('/commits')) {
+    // 23 commits, newest first; two are merges (two parents).
+    return ok({ values: Array.from({ length: 23 }, (_, i) => ({
+      hash: `${i}`.padStart(12, 'e'),
+      message: i === 0 ? 'WCE-12 export invoices' : i === 3 || i === 7 ? `Merge branch 'main' ${i}` : `step ${i}`,
+      parents: i === 3 || i === 7 ? [{}, {}] : [{}]
+    })) });
+  }
   if (url.includes('/diffstat')) {
     return ok({ values: [{ status: 'modified', lines_added: 400, lines_removed: 0, old: { path: REAL_PATH }, new: { path: REAL_PATH } }] });
   }
@@ -97,6 +119,31 @@ assert.match(pack.text, /Add invoice export endpoint/);
 assert.equal(calls.diff, 1);
 console.log('  ✓ get_pr_context_pack syncs on first use');
 
+// 2b. Commits: the cap is announced and merges are left out (regression: 10 of N shown silently)
+assert.match(pack.text, /## Commits \(10 of 23 shown, newest first; merge commits omitted\)/);
+assert.doesNotMatch(pack.text, /Merge branch/);
+console.log('  ✓ commit list says how many are shown and skips merges');
+
+// 2c. Open review threads are summarized live in the pack (sanitized, mapped to file ids); a comments outage never fails it
+assert.match(pack.text, /## Review threads \(live\)\nOpen: 1 \(1 from apps\) · Resolved: 0\n- file_0001 \(1 open, 1 from apps, line 10\): Please rename this, ping/);
+assert.ok(!pack.text.includes('dev@example.com'), 'thread text is sanitized');
+commentsStatus = 500;
+const noComments = await call('get_pr_context_pack', { pr_url: PR_URL });
+commentsStatus = 200;
+assert.ok(!noComments.isError);
+assert.match(noComments.text, /## Review threads \(live\)\nUnavailable: /);
+console.log('  ✓ context pack lists open review threads by file id, and survives a comments outage');
+
+// 2d. Approvals and build status, live: counts only (no names), latest status per key, sanitized text
+assert.match(pack.text, /## Review status \(live\)\nApprovals: 1 · Changes requested: 1 · Participants: 2 \(reviewers: 1\)\nBuild: 1 failed, 1 passed, 0 running\n- FAILED Pipeline #13: 2 tests failed, ask .*\n- SUCCESSFUL Lint \(older commit\)/);
+assert.ok(!/Pipeline #12|Alice|Bot Requester|qa@example\.com/.test(pack.text), 'no superseded status, names or emails');
+statusesStatus = 500;
+const noBuild = await call('get_pr_context_pack', { pr_url: PR_URL });
+statusesStatus = 200;
+assert.ok(!noBuild.isError);
+assert.match(noBuild.text, /Approvals: 1 .*\nBuild: unavailable \(/);
+console.log('  ✓ context pack shows approvals and the latest build status per pipeline, and survives a statuses outage');
+
 // 3. Read Strategy lists the files to open next (regression: it read a non-existent field)
 assert.match(pack.text, /Read next: .*file_0001/);
 console.log('  ✓ context pack Read Strategy lists next file ids');
@@ -109,7 +156,7 @@ assert.equal(calls.diff, 1, 'no re-download while the head commits are unchanged
 sourceHash = 'cccccccccccc';
 extraLine = '\n+  const added = 1;';
 const resynced = await call('get_pr_context_pack', { pr_url: PR_URL });
-assert.match(resynced.text, /## Changed since last sync \(rev_aaaaaaa_bbbbbbb\)\nFiles: file_0001/);
+assert.match(resynced.text, /## Changed since last sync \(rev_aaaaaaa_bbbbbbb\)\n- file_0001 `src\/\.\.\.\/billing\/InvoiceController\.ts` \(modified\)/);
 assert.equal(calls.diff, 2, 're-sync after the source commit moved');
 assert.equal(JSON.parse((await call('get_pr_sync_status', { pr_url: PR_URL })).text).source_commit, sourceHash);
 console.log('  ✓ stale revision is detected by commit hash and re-synced');
@@ -144,8 +191,10 @@ console.log('  ✓ diff headers use the sanitized path');
 
 // 9. Manifest keeps the PR draft flag
 const prDir = path.resolve('ai-context', 'acme', 'acme', 'demo-repo', 'pr_7');
-assert.equal(JSON.parse(readSecure(path.join(prDir, 'manifest.json'))).is_draft, true);
-console.log('  ✓ manifest.is_draft comes from Bitbucket');
+const manifest = JSON.parse(readSecure(path.join(prDir, 'manifest.json')));
+assert.equal(manifest.is_draft, true);
+assert.deepEqual([manifest.stats.commits_count, manifest.stats.commits_shown], [23, 10]);
+console.log('  ✓ manifest.is_draft comes from Bitbucket; commits_count is the real total');
 
 // 9a. Encrypted at rest: every file starts with PRC1 and leaks neither content nor the key material
 const rawFiles: string[] = [];
@@ -179,6 +228,7 @@ assert.equal(inline.file_id, 'file_0001');
 assert.equal(inline.path, 'src/.../billing/InvoiceController.ts');
 assert.equal(inline.line, 10);
 assert.ok(!inline.text.includes('dev@example.com') && !('author' in inline), 'email redacted, author removed by default');
+assert.deepEqual([inline.author_kind, comments.comments[1].author_kind], ['app', 'person'], 'account kind is kept even without author names');
 assert.ok(!comments.comments[1].text.includes('ATATT3x') && comments.comments[1].resolved === true);
 assert.equal(JSON.parse((await call('get_pr_comments', { pr_url: PR_URL, include_resolved: false })).text).total, 1);
 const firstPage = JSON.parse((await call('get_pr_comments', { pr_url: PR_URL, limit: 1 })).text);

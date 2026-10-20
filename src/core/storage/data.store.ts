@@ -20,6 +20,8 @@ import { FileIndexEntryV4 } from '../output/schema/file_index.v4.schema.js';
 import { FileChangeV4 } from '../output/schema/file_change.v4.schema.js';
 import { PRCoverageV4 } from '../output/schema/coverage.v4.schema.js';
 
+const RISK_ORDER: RiskLevel[] = ['none', 'low', 'medium', 'high', 'critical'];
+
 export class DataStore {
   static getActiveRevision(workspace: string, repoSlug: string, prId: number) {
     return OutputReader.getActiveRevision(workspace, repoSlug, prId);
@@ -74,9 +76,10 @@ export class DataStore {
     const fileChangesMap = new Map<string, { change: FileChangeV4; diffContent: string }>();
 
     const kindCounts: Record<string, number> = {};
-    const allRiskTagsSet = new Set<string>();
+    const filesByTag = new Map<string, string[]>();
     const importantFileIds: string[] = [];
     let riskyFilesCount = 0;
+    let overallLevel: RiskLevel = 'none';
 
     const diffByPath = new Map<string, (typeof parsedDiff.files)[number]>();
     for (const f of parsedDiff.files) {
@@ -109,7 +112,12 @@ export class DataStore {
 
       const classification = ChangeClassifier.classify(matchedDiff);
       const risk = RiskAnalyzer.analyze(matchedDiff, classification);
-      const symbols = SymbolExtractor.extractSymbols(matchedDiff, classification.kind === 'comment_only');
+      // Names and signatures are raw diff text: scan them like the patch.
+      const symbols = SymbolExtractor.extractSymbols(matchedDiff, classification.kind === 'comment_only').map(s => ({
+        ...s,
+        name: SecretScanner.scanAndRedact(s.name, tracker),
+        ...(s.signature ? { signature: SecretScanner.scanAndRedact(s.signature, tracker) } : {})
+      }));
 
       if (isSensitive) {
         risk.tags.push('sensitive_configuration');
@@ -118,7 +126,8 @@ export class DataStore {
       }
 
       kindCounts[classification.kind] = (kindCounts[classification.kind] || 0) + 1;
-      risk.tags.forEach(t => allRiskTagsSet.add(t));
+      risk.tags.forEach(t => filesByTag.set(t, [...(filesByTag.get(t) ?? []), fileIdStr]));
+      if (RISK_ORDER.indexOf(risk.level) > RISK_ORDER.indexOf(overallLevel)) overallLevel = risk.level;
       if (risk.level === 'high' || risk.level === 'critical') {
         riskyFilesCount++;
         importantFileIds.push(fileIdStr);
@@ -186,16 +195,6 @@ export class DataStore {
       }
     }
 
-    // Determine Overall Risk Level
-    let overallLevel: RiskLevel = 'none';
-    if (allRiskTagsSet.has('auth_security') || allRiskTagsSet.has('database_schema')) {
-      overallLevel = 'high';
-    } else if (allRiskTagsSet.has('public_api') || allRiskTagsSet.has('secret_config')) {
-      overallLevel = 'medium';
-    } else if (allRiskTagsSet.size > 0) {
-      overallLevel = 'low';
-    }
-
     const fetchWarning = rawRev.warnings.length > 0 ? SecretScanner.scanAndRedact(rawRev.warnings.join('; ')) : null;
     const section = (status: 'complete' | 'partial' | 'failed', items: number) => ({
       status,
@@ -238,12 +237,14 @@ export class DataStore {
       },
       risk_summary: {
         overall_level: overallLevel,
-        total_risk_tags: Array.from(allRiskTagsSet),
-        risky_files_count: riskyFilesCount
+        total_risk_tags: [...filesByTag.keys()],
+        risky_files_count: riskyFilesCount,
+        reasons: [...filesByTag].map(([tag, ids]) => `${tag}: ${ids.slice(0, 5).join(', ')}${ids.length > 5 ? ` (+${ids.length - 5})` : ''}`)
       },
       stats: {
         files_changed: fileEntries.length,
-        commits_count: projectedCommits.length
+        commits_count: Array.isArray(rawRev.commits) ? rawRev.commits.length : 0,
+        commits_shown: projectedCommits.length
       },
       important_file_ids: importantFileIds,
       index_refs: {
