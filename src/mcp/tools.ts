@@ -10,7 +10,7 @@ const { version } = JSON.parse(fs.readFileSync(new URL('../../package.json', imp
 
 export const INSTRUCTIONS = `mcp-pr-companion: read-only, privacy-sanitized context for Bitbucket Cloud pull requests.
 Workflow:
-1. get_pr_context_pack(pr_url) first. It syncs the PR from Bitbucket when there is no local copy or the PR has new commits, then returns a compact Markdown summary with a Read Strategy listing the file ids worth opening.
+1. get_pr_context_pack(pr_url) first. It syncs the PR from Bitbucket when there is no local copy or the PR has new commits, then returns compact Markdown: a Read Strategy (file ids to open, highest priority first), live approvals and build status, and open review threads per file id; open those files too.
 2. search_pr_files(pr_url, filters) to list file ids by path, language, status, change_kind or risk_tag.
 3. get_pr_file_context(pr_url, file_id) for one file's summary and diff, or get_pr_file_changes(pr_url, file_id) for classification, risk evidence and symbols as JSON.
 4. get_pr_comments(pr_url) for review feedback (include_resolved=false for open threads only).

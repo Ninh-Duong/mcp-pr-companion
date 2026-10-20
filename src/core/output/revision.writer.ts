@@ -114,7 +114,7 @@ export class RevisionWriter {
       fs.rmSync(topFilesDir, { recursive: true, force: true });
       fs.renameSync(tmpFilesDir, topFilesDir);
 
-      writeSecure(path.join(prDir, 'context.md'), MarkdownFormatter.formatContextPack(`${workspace}/${repoSlug}`, fullManifest, commitsJsonl, aiReading), scope);
+      writeSecure(path.join(prDir, 'context.md'), MarkdownFormatter.formatContextPack(`${workspace}/${repoSlug}`, fullManifest, commitsJsonl, aiReading, fileEntries), scope);
       writeSecure(path.join(prDir, 'files.md'), MarkdownFormatter.formatFilesSummaryList(fileEntries), scope);
       writeSecure(path.join(prDir, 'actions.md'), MarkdownFormatter.formatActionsSummary(coverageData), scope);
       // Top-level manifest.json kept for backward compatibility.

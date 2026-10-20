@@ -64,7 +64,7 @@ Both entries start `enabled: false`. Set both to `true` once `.env` is filled an
 | Forwards tool schemas and annotations unchanged | zod `inputSchema` and annotations on every tool |
 | Prefixes tools with `pr__` | Child tool names have no prefix |
 | Prefixes each tool description with `[pr via mcp-pr-companion]`, serves its contract `../mcp-hub/docs/mcps/mcp-pr-companion.md` as a prompt, and does **not** forward this server's `INSTRUCTIONS` | Agents under the hub learn the workflow from the hub contract; `INSTRUCTIONS` reaches only direct connections. Keep tool descriptions self-contained and the contract in step with `INSTRUCTIONS`. |
-| Applies a per-call timeout | Fetch-heavy tools are `get_pr_context_pack` and `sync_my_open_prs`; the others make at most one access-check request per repository per minute. `sync_my_open_prs` on a repository with many changed PRs can approach `timeoutSeconds`: call it per repository, or raise the timeout. |
+| Applies a per-call timeout | Fetch-heavy tools are `get_pr_context_pack` (it also fetches build statuses and comments live, plus metadata again on a first sync) and `sync_my_open_prs`; the others make at most one access-check request per repository per minute. `sync_my_open_prs` on a repository with many changed PRs can approach `timeoutSeconds`: call it per repository, or raise the timeout. |
 | Launches the child once per client session | `AUTO_SYNC_ON_START=true` (child `.env`, or `env` in the hub child config) syncs in the background at each launch |
 | Needs a read-only upstream health check for `scripts/smoke.py` (`docs/child-mcp-compatibility.md`) | `check_bitbucket_connection` returns `{"connected": true}` only when the token authenticates |
 

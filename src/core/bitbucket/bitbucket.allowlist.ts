@@ -80,7 +80,8 @@ export class BitbucketAllowlistProjector {
   static projectCommits(rawCommits: any[] = [], maxSubjects = 10): ProjectedCommit[] {
     if (!Array.isArray(rawCommits)) return [];
 
-    return rawCommits.slice(0, maxSubjects).map((c: any) => {
+    // Merge commits ("Merge branch …") say nothing about the change and would eat the cap.
+    return rawCommits.filter((c: any) => (c.parents?.length ?? 0) < 2).slice(0, maxSubjects).map((c: any) => {
       const fullMsg = c.message || '';
       const subject = fullMsg.split('\n')[0].trim();
       return {

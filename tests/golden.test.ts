@@ -82,7 +82,7 @@ function runGoldenTests() {
   };
 
   const c3 = ChangeClassifier.classify(renameDiff);
-  if (c3.kind !== 'formatting_only') throw new Error(`Golden 3 failed: expected formatting_only for rename, got ${c3.kind}`);
+  if (c3.kind !== 'rename_only') throw new Error(`Golden 3 failed: expected rename_only for rename, got ${c3.kind}`);
   console.log('  ✅ Golden 3: Rename file PR passed');
 
   // Golden Fixture 4: Added / Deleted File

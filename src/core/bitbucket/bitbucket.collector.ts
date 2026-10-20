@@ -58,10 +58,21 @@ export class BitbucketCollector {
     return this.client.getPRComments(workspace, repoSlug, prId);
   }
 
-  /** One metadata request: the PR's current source and target commit hashes (used to detect stale revisions). */
-  async getHeadCommits(workspace: string, repoSlug: string, prId: number): Promise<{ source: string; destination: string }> {
+  getStatuses(workspace: string, repoSlug: string, prId: number) {
+    return this.client.getPRStatuses(workspace, repoSlug, prId);
+  }
+
+  /**
+   * One metadata request: the PR's current source and target commit hashes (used to detect stale revisions),
+   * plus its raw participants (approvals) so callers need no second request.
+   */
+  async getHeadCommits(workspace: string, repoSlug: string, prId: number): Promise<{ source: string; destination: string; participants: any[] }> {
     const metadata = await this.client.getPRMetadata(workspace, repoSlug, prId);
-    return { source: metadata.source?.commit?.hash || 'unknown_source', destination: metadata.destination?.commit?.hash || 'unknown_dest' };
+    return {
+      source: metadata.source?.commit?.hash || 'unknown_source',
+      destination: metadata.destination?.commit?.hash || 'unknown_dest',
+      participants: Array.isArray(metadata.participants) ? metadata.participants : []
+    };
   }
 
   async collect(workspace: string, repoSlug: string, prId: number, options: BitbucketFetchOptions = {}): Promise<RawPRRevision> {
