@@ -45,7 +45,7 @@ This repository is built almost entirely by AI agents. Any agent that edits it (
 
 | Path | Responsibility |
 |---|---|
-| `bin/cli.js` | Launcher (stdlib only): Node version check, `npm ci`, build when `src/` changed, `.env` load and required keys, then spawns an entry with `cwd` = root. Commands: `server` (default), `cmd`, `generate-all`, `check`, `prepare`. |
+| `bin/cli.js` | Launcher (stdlib only): Node version check, `npm ci`, build when `src/` changed, `.env` load and required keys, then spawns an entry with `cwd` = root. Commands: `server` (default), `cmd`, `generate-all`, `purge-plaintext`, `check`, `prepare`. |
 | `src/mcp/server.ts` | MCP stdio entry point, kept tiny. |
 | `src/mcp/tools.ts` | `createServer()`: tool registration (zod `inputSchema`, `annotations`), `run()` error wrapper, `INSTRUCTIONS`. |
 | `src/mcp/context.service.ts` | `PRContextService`: freshness check and sync (`ensureFresh`, `sync` with in-flight dedup), local reads, `page()`. |
@@ -83,7 +83,7 @@ The PR tools take `pr_url` (`https://bitbucket.org/{workspace}/{repo}/pull-reque
 
 **Tool rule:** register with `server.registerTool(name, { title, description, inputSchema, annotations }, handler)` and wrap the body in `run(name, …)`. Set `readOnlyHint` (false only if the tool writes, even to the local cache) and `openWorldHint` (true if it calls Bitbucket). Errors are thrown as `Error` with an actionable message and become `isError` results prefixed `Error:`. The hub treats that prefix as a failure.
 
-**Instructions rule:** `INSTRUCTIONS` in `src/mcp/tools.ts` is sent on `initialize`. It is the only guidance an agent in another repository gets. Keep it under 1,500 characters (Claude Code truncates server instructions at 4,096) and update it whenever a tool changes.
+**Instructions rule:** `INSTRUCTIONS` in `src/mcp/tools.ts` is sent on `initialize`. It is the only guidance an agent gets on a **direct** connection. mcp-hub does not forward it: under the hub, agents read the contract `../mcp-hub/docs/mcps/mcp-pr-companion.md` and tool descriptions prefixed `[pr via mcp-pr-companion]` (see [docs/HUB_INTEGRATION.md](docs/HUB_INTEGRATION.md) §4). Keep it under 1,500 characters (Claude Code truncates server instructions at 4,096) and update it whenever a tool changes.
 
 ### Adding a tool (3 steps)
 

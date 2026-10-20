@@ -7,7 +7,7 @@ Every package here costs install time on each fresh clone (mcp-hub runs `npm ci`
 | Package | Used by | Why it is needed |
 |---|---|---|
 | `@modelcontextprotocol/sdk` | `src/mcp/` | The MCP protocol: stdio transport, `McpServer`, and `InMemoryTransport` for tests. |
-| `zod` | tool schemas, `config.schema.ts`, `output/schema/*` | Required by the SDK's `registerTool` and used for env parsing and the on-disk contract. One validator everywhere. Keep it on v3 (`^3.25`) unless the SDK and every schema move together. |
+| `zod` | tool schemas, `config.schema.ts`, `output/schema/*` | Required by the SDK's `registerTool` and used for env parsing and the on-disk contract. One validator everywhere. Keep it on v3 (`^3.24.1`, locked at 3.25.x) unless the SDK and every schema move together. |
 | `@inquirer/prompts` | `src/cmd/` only | Arrow-key menus in the CLI. `node:readline` would mean rewriting select/confirm widgets by hand. Never import it outside `src/cmd/`. |
 | `p-limit` | `generation.manager.ts` | Caps concurrent PR generation in the CLI. ponytail: about 10 lines of stdlib could replace it; do that if it ever causes trouble. |
 

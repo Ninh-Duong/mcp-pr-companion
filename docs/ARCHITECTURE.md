@@ -96,7 +96,7 @@ sequenceDiagram
 ```
 
 - `PRContextService.sync` keeps one in-flight promise per PR, so parallel calls (refresh or not) share a fetch.
-- File tools never contact Bitbucket. They read the revision that `get_pr_context_pack` last made current.
+- File tools never download PR data. Like every tool, they first pass the repository access check (`AccessGate.unlock`: one Bitbucket request per repository, cached 60 s), then read the revision that `get_pr_context_pack` or `sync_my_open_prs` last made current.
 - `get_pr_comments` and `list_my_open_prs` always fetch live and store nothing: comments change without new commits, so a commit-hash freshness check cannot cover them.
 - Re-review: when a sync replaces a *different* revision, `DataStore.saveRevision` compares the files against the active revision (by sanitized path and patch content) and stores `changes_since_previous` in the manifest. `context.md` renders it as "Changed since last sync".
 - Transient errors (429/502/503/504) are retried up to twice inside `fetchWithRetry`.
