@@ -25,9 +25,9 @@ cd mcp-pr-companion
 
 | Hệ điều hành | Lệnh |
 |---|---|
-| Windows (PowerShell) | `.\run.cmd check` |
-| Windows (cmd) | `run.cmd check` |
-| macOS / Linux | `./run.sh check` |
+| Windows (PowerShell) | `.\run.cmd cmd` |
+| Windows (cmd) | `run.cmd cmd` |
+| macOS / Linux | `./run.sh cmd` |
 
 Lần chạy đầu, công cụ **tự chuẩn bị mọi thứ**, bạn không cần cài gì trước:
 
@@ -35,6 +35,8 @@ Lần chạy đầu, công cụ **tự chuẩn bị mọi thứ**, bạn không 
 2. Chưa có thư viện → tự chạy `npm ci`.
 3. Chưa build → tự build.
 4. Chưa có file cấu hình → tự tạo file `.env` rồi **dừng lại** để bạn điền thông tin.
+
+Lệnh `check` chỉ kiểm tra thư viện, build và cấu hình; không cài thư viện, build hay tạo `.env`. Wrapper `run.cmd` / `run.sh` vẫn kiểm tra và cài Node.js nếu cần trước khi chạy `check`. Muốn chỉ chuẩn bị thư viện + build, chạy `.\run.cmd prepare` (macOS / Linux: `./run.sh prepare`).
 
 ### Bước 3: Điền file `.env`
 
@@ -69,7 +71,7 @@ Chạy lại `.\run.cmd check`. Thấy toàn dấu ✓ là xong:
 ```powershell
 .\run.cmd cmd              # mở menu: xem PR, Sync 1 PR, Generate nhiều PR, xem dữ liệu đã giải mã
 .\run.cmd generate-all     # tạo context cho tất cả PR đang mở của bạn, trong mọi repo khai báo
-.\run.cmd check            # kiểm tra môi trường (không thay đổi gì)
+.\run.cmd check            # kiểm tra thư viện/build/cấu hình; wrapper có thể cài Node.js
 .\run.cmd purge-plaintext  # xoá dữ liệu cũ chưa mã hoá trong ai-context/ (chạy 1 lần sau khi nâng cấp)
 ```
 
@@ -250,6 +252,7 @@ npm test         # chạy toàn bộ test (trong thư mục tạm, không đụn
 
 - `run.cmd` / `run.sh`: kiểm tra và tự cài Node.js.
 - `bin/cli.js`: kiểm tra thư viện, build và `.env`, sau đó khởi động app.
+- Build được làm mới khi `src/`, `tsconfig.json`, `package-lock.json` hoặc `package.json` thay đổi. CI chạy test trên Windows, macOS, Ubuntu với Node.js 20.12.0 và 22; Ubuntu kiểm tra thêm Docker build.
 - `src/`: mã nguồn. `tests/`: test.
 
 Tài liệu cho developer và AI agent (tiếng Anh):

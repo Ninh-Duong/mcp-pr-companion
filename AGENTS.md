@@ -45,7 +45,7 @@ This repository is built almost entirely by AI agents. Any agent that edits it (
 
 | Path | Responsibility |
 |---|---|
-| `bin/cli.js` | Launcher (stdlib only): Node version check, `npm ci`, build when `src/` changed, `.env` load and required keys, then spawns an entry with `cwd` = root. Commands: `server` (default), `cmd`, `generate-all`, `purge-plaintext`, `check`, `prepare`. |
+| `bin/cli.js` | Launcher (stdlib only): Node version check, `npm ci`, build when `src/`, `tsconfig.json`, `package-lock.json` or `package.json` changed, `.env` load and required keys, then spawns an entry with `cwd` = root. Commands: `server` (default), `cmd`, `generate-all`, `purge-plaintext`, `check`, `prepare`. |
 | `src/mcp/server.ts` | MCP stdio entry point, kept tiny. |
 | `src/mcp/tools.ts` | `createServer()`: tool registration (zod `inputSchema`, `annotations`), `run()` error wrapper, `INSTRUCTIONS`. |
 | `src/mcp/context.service.ts` | `PRContextService`: freshness check and sync (`ensureFresh`, `sync` with in-flight dedup), local reads, `page()`. |

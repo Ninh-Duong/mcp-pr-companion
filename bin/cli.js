@@ -86,7 +86,7 @@ function checkDeps() {
 }
 
 function sourceHash() {
-  return sha256(...listFiles(path.join(root, 'src')), path.join(root, 'tsconfig.json'), path.join(root, 'package-lock.json'));
+  return sha256(...listFiles(path.join(root, 'src')), path.join(root, 'tsconfig.json'), path.join(root, 'package-lock.json'), path.join(root, 'package.json'));
 }
 
 function checkBuild() {
