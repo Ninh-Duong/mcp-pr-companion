@@ -53,7 +53,7 @@ Copy the hub template `config/mcps/mcp-pr-companion.example.json`:
 }
 ```
 
-Both entries start `enabled: false`. Set both to `true` once `.env` is filled and `check` passes, then restart the client that runs the hub. Agents edit hub config only through `uv run python scripts/private_config.py` and never open `config/private/**` (hub `AGENTS.md`).
+Both entries start `enabled: false`. Set both to `true` once `.env` is filled and `check` passes, then restart the client that runs the hub. Follow the Hub's `AGENTS.md` and `docs/adding-a-child-mcp.md`: `config/private/hub.json` may be read and edited, but must contain no secrets. Use `scripts/private_config.py keys|set` only for `config/private/mcps/mcp-pr-companion.json`, and never open or print that child config after creation.
 
 ## 4. What the hub relies on (do not break)
 
