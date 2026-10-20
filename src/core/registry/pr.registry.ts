@@ -32,22 +32,24 @@ export class PRRegistry {
 
     // Path must match /workspace/repo/pull-requests/id
     const pathname = parsedUrl.pathname.replace(/\/$/, '');
-    const match = pathname.match(/^\/([^\/]+)\/([^\/]+)\/pull-requests\/(\d+)$/i);
+    // A URL copied from any PR tab works: …/pull-requests/7/overview, /diff, /commits, /activity.
+    const match = pathname.match(/^\/([^\/]+)\/([^\/]+)\/pull-requests\/(\d+)(?:\/(?:overview|diff|commits|activity))?$/i);
 
     if (!match) {
       throw new Error(`Invalid Bitbucket PR URL path structure. Expected: https://bitbucket.org/{workspace}/{repo}/pull-requests/{id}`);
     }
 
-    const workspace = match[1];
-    const repoSlug = match[2];
-    const prId = parseInt(match[3], 10);
+    // Bitbucket slugs are case-insensitive: one case means one folder and one in-flight sync per PR.
+    const workspace = match[1].toLowerCase();
+    const repoSlug = match[2].toLowerCase();
+    const prId = Number(match[3]);
 
     const slugRegex = /^[a-zA-Z0-9_\-\.]+$/;
     if (!slugRegex.test(workspace) || !slugRegex.test(repoSlug)) {
       throw new Error(`Invalid workspace or repository name in PR URL. Slugs must contain only letters, numbers, hyphens, underscores, or dots.`);
     }
 
-    if (isNaN(prId) || prId <= 0) {
+    if (!Number.isSafeInteger(prId) || prId <= 0) {
       throw new Error(`Invalid PR ID number: ${match[3]}`);
     }
 

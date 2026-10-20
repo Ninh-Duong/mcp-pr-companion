@@ -31,11 +31,13 @@ export class SymbolExtractor {
       });
     };
 
+    const isSql = /\.sql$/i.test(fileDiff.newPath || fileDiff.oldPath || '');
+
     for (const hunk of fileDiff.hunks) {
       let currentLine = hunk.newStart || hunk.oldStart || 1;
 
       // git writes the enclosing function/class/namespace after the second "@@".
-      const scope = hunk.header.replace(/^@@[^@]*@@\s*/, '').trim().slice(0, 120);
+      const scope = hunk.header.replace(/^@@[^@]*@@\s*/, '').trim(); // cut after the secret scan (DataStore)
       if (scope && scope !== '@@') addSymbol('scope', scope, 'modified_symbol', hunk.newStart || undefined, undefined, true);
 
       for (const line of hunk.lines) {
@@ -75,11 +77,14 @@ export class SymbolExtractor {
           }
         }
 
-        // 5. SQL objects: CREATE / ALTER [OR ALTER] [UNIQUE] [NON]CLUSTERED <type> [schema].[name]
-        const sqlMatch = content.match(/\b(?:CREATE|ALTER)\s+(?:OR\s+ALTER\s+)?(?:UNIQUE\s+)?(?:(?:NON)?CLUSTERED\s+)?(TABLE|VIEW|PROCEDURE|PROC|FUNCTION|TRIGGER|INDEX)\s+([\[\]\w.]+)/i);
+        // 5. SQL objects (SQL files, not comments): CREATE / ALTER [OR ALTER|REPLACE] [UNIQUE] [NON]CLUSTERED [MATERIALIZED] <type>
+        //    [IF NOT EXISTS | CONCURRENTLY | ONLY] [schema].[name] / "name" / `name`
+        const sqlMatch = isSql && !/^(--|\/\*|\*)/.test(content)
+          ? content.match(/\b(?:CREATE|ALTER)\s+(?:OR\s+(?:ALTER|REPLACE)\s+)?(?:UNIQUE\s+)?(?:(?:NON)?CLUSTERED\s+)?(?:MATERIALIZED\s+)?(TABLE|VIEW|PROCEDURE|PROC|FUNCTION|TRIGGER|INDEX)\s+(?:(?:IF\s+NOT\s+EXISTS|CONCURRENTLY|ONLY)\s+)*([\[\]"`\w.]+)/i)
+          : null;
         if (sqlMatch) {
           const type = sqlMatch[1].toLowerCase() === 'proc' ? 'procedure' : sqlMatch[1].toLowerCase();
-          addSymbol(`sql_${type}`, sqlMatch[2].replace(/[\[\]]/g, ''), changeType, currentLine, content);
+          addSymbol(`sql_${type}`, sqlMatch[2].replace(/[\[\]"`]/g, ''), changeType, currentLine, content);
         }
 
         // 6. gRPC Proto RPC & Messages

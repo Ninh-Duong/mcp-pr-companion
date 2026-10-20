@@ -65,18 +65,23 @@ export class RiskAnalyzer {
       evidence.push('Authentication, authorization, or security sensitive logic modified');
     }
 
-    // 3. Database Schema & Migration (database_schema): tables, indexes, constraints, renames
+    // SQL keywords count only in SQL files, outside comments ("// drop index later" in C# is not a schema change).
+    const sqlText = ext === '.sql'
+      ? [...addedLines, ...deletedLines].filter(l => !/^\s*(--|\/\*|\*|\/\/)/.test(l)).join('\n')
+      : '';
+
+    // 3. Database Schema & Migration (database_schema): tables, indexes, constraints, renames (temp #tables excluded)
     if (
       classification.kind === 'database_migration' ||
       /migrationBuilder\.(CreateTable|DropTable|AddColumn|DropColumn|AlterColumn|CreateIndex|DropIndex)/i.test(allChangedText) ||
-      /\b(CREATE|ALTER|DROP)\s+(TABLE|SCHEMA|TYPE|(UNIQUE\s+)?((NON)?CLUSTERED\s+)?INDEX)\b|\bADD\s+CONSTRAINT\b|\bsp_rename\b/i.test(allChangedText)
+      /\b(CREATE|ALTER|DROP)\s+(TABLE(?!\s+#)|SCHEMA|TYPE|(UNIQUE\s+)?((NON)?CLUSTERED\s+)?INDEX)\b|\bADD\s+CONSTRAINT\b|\bsp_rename\b/i.test(sqlText)
     ) {
       tags.push('database_schema');
       evidence.push('Database table, index or constraint structure altered');
     }
 
     // 3b. Database programmable objects (database_object): views, procedures, functions, triggers
-    if (/\b(CREATE|ALTER|DROP)\s+(OR\s+ALTER\s+)?(VIEW|PROC|PROCEDURE|FUNCTION|TRIGGER)\b/i.test(allChangedText)) {
+    if (/\b(CREATE|ALTER|DROP)\s+(OR\s+(ALTER|REPLACE)\s+)?(MATERIALIZED\s+)?(VIEW|PROC|PROCEDURE|FUNCTION|TRIGGER)\b/i.test(sqlText)) {
       tags.push('database_object');
       evidence.push('Database view, procedure, function or trigger defined or dropped');
     }

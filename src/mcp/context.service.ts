@@ -32,6 +32,11 @@ export interface FileFilters {
 
 type Head = Awaited<ReturnType<BitbucketCollector['getHeadCommits']>>;
 
+/** One comment can be a 50 KB bot report: cap each so a page of comments stays bounded (invariant 4). */
+const MAX_COMMENT_CHARS = 4000;
+const capText = (text: string) =>
+  text.length > MAX_COMMENT_CHARS ? `${text.slice(0, MAX_COMMENT_CHARS)}\n[truncated: ${MAX_COMMENT_CHARS} of ${text.length} chars]` : text;
+
 const NOT_SYNCED ='PR is not synced yet. Call get_pr_context_pack for this pr_url first.';
 
 /**
@@ -94,12 +99,16 @@ export class PRContextService {
 
   static async getContextPack(prUrl: string, refresh: boolean, includeFileTable: boolean): Promise<string> {
     const pr = PRRegistry.parseAndValidateUrl(prUrl);
-    const { note, head } = await this.ensureFresh(pr, refresh);
+    const { note, head, status } = await this.ensureFresh(pr, refresh);
     const context = OutputReader.getContextPack(pr.workspace, pr.repoSlug, pr.prId);
     if (!context) throw new Error('Context pack generation failed: context.md was not written.');
 
     // Approvals, builds and comments change without new commits, so they are summarized live and never stored.
-    const parts = [note, context, await this.reviewStatusSection(pr, head), await this.reviewThreadsSection(pr)];
+    // Offline, each live request would only wait out its own timeout.
+    const live = status === 'offline'
+      ? ['## Live review data\nSkipped: Bitbucket could not be reached.']
+      : await Promise.all([this.reviewStatusSection(pr, head), this.reviewThreadsSection(pr)]);
+    const parts = [note, context, ...live];
     if (includeFileTable) parts.push(OutputReader.getFilesSummary(pr.workspace, pr.repoSlug, pr.prId));
     return parts.filter(Boolean).join('\n\n---\n\n');
   }
@@ -129,8 +138,10 @@ export class PRContextService {
     const pr = await this.requireSynced(prUrl);
     const detail = OutputReader.getFileChange(pr.workspace, pr.repoSlug, pr.prId, fileId);
     if (!detail) throw new Error(`No file ${OutputReader.normalizeFileId(fileId)} in this PR. Use search_pr_files to list file ids.`);
+    const MAX_SYMBOLS = 50; // bounded output: a generated file can list hundreds
+    const { symbols } = detail.change;
     return {
-      change: detail.change,
+      change: symbols.length > MAX_SYMBOLS ? { ...detail.change, symbols: symbols.slice(0, MAX_SYMBOLS), symbols_total: symbols.length } as FileChangeV4 : detail.change,
       ...(includePatch ? { patch: this.page(detail.diffContent ?? '', offset, maxChars) } : {})
     };
   }
@@ -171,6 +182,7 @@ export class PRContextService {
     const collector = new BitbucketCollector();
     try {
       head ??= await collector.getHeadCommits(pr.workspace, pr.repoSlug, pr.prId);
+      if (head.state !== 'OPEN' || head.draft) lines.push(`State: ${head.state}${head.draft ? ' (draft)' : ''}`);
       const ps = head.participants;
       const count = (f: (p: any) => boolean) => ps.filter(f).length;
       lines.push(`Approvals: ${count(p => p.approved)} · Changes requested: ${count(p => p.state === 'changes_requested')} · Participants: ${ps.length} (reviewers: ${count(p => p.role === 'REVIEWER')})`);
@@ -184,8 +196,9 @@ export class PRContextService {
       // Re-runs report under the same key: keep only the newest per pipeline.
       const latest = new Map<string, any>();
       for (const s of res.values) {
-        const prev = latest.get(s.key);
-        if (!prev || String(s.updated_on) > String(prev.updated_on)) latest.set(s.key, s);
+        const key = s.key ?? s.name ?? ''; // keyless statuses must not collapse into one
+        const prev = latest.get(key);
+        if (!prev || String(s.updated_on) > String(prev.updated_on)) latest.set(key, s);
       }
       const statuses = [...latest.values()];
       if (statuses.length === 0) {
@@ -195,10 +208,11 @@ export class PRContextService {
         lines.push(`Build: ${n('FAILED') + n('STOPPED')} failed, ${n('SUCCESSFUL')} passed, ${n('INPROGRESS')} running`);
         const order = ['FAILED', 'STOPPED', 'INPROGRESS', 'SUCCESSFUL'];
         const clean = (t: unknown) => SecretScanner.scanAndRedact(PIISanitizer.sanitizeText(String(t ?? ''))).replace(/\s+/g, ' ').trim();
-        for (const s of statuses.sort((a, b) => order.indexOf(a.state) - order.indexOf(b.state)).slice(0, 5)) {
+        const rank = (state: string) => (order.includes(state) ? order.indexOf(state) : order.length); // unknown states last
+        for (const s of statuses.sort((a, b) => rank(a.state) - rank(b.state)).slice(0, 5)) {
           const desc = clean(s.description);
           // Metadata carries a 12-char source hash, statuses the full one.
-          const stale = head && s.commit?.hash && !String(s.commit.hash).startsWith(head.source) ? ' (older commit)' : '';
+          const stale = head && head.source !== 'unknown_source' && s.commit?.hash && !String(s.commit.hash).startsWith(head.source) ? ' (older commit)' : '';
           lines.push(`- ${s.state} ${clean(s.name)}${stale}${desc ? `: ${desc.length > 100 ? `${desc.slice(0, 100)}…` : desc}` : ''}`);
         }
       }
@@ -271,7 +285,7 @@ export class PRContextService {
           ...(privacy.remove_author ? {} : { author: PIISanitizer.sanitizeAuthor(c.user, false)?.display_name }),
           // Bitbucket's account type, not a name: lets an agent weigh bot output against human review.
           author_kind: (c.user?.type === 'app_user' ? 'app' : 'person') as 'app' | 'person',
-          text: clean(c.content?.raw ?? '')
+          text: capText(clean(c.content?.raw ?? ''))
         };
       });
     return { comments, complete: res.isComplete, warnings: res.warnings };
@@ -283,7 +297,10 @@ export class PRContextService {
     const { email, token, repositories } = ConfigManager.credentials();
     const targets = repository ? [repository] : repositories;
     if (targets.length === 0) throw new Error('No repository: pass repository ("workspace/repo") or set BITBUCKET_REPOSITORY in .env.');
-    if (targets.some(r => !/^[^/\s]+\/[^/\s]+$/.test(r))) throw new Error('repository must look like "workspace/repo".');
+    // It goes into the API URL and the local folder lookup: slug characters only, no "." / ".." segments.
+    if (targets.some(r => !/^[\w.-]+\/[\w.-]+$/.test(r) || r.split('/').some(s => /^\.+$/.test(s)))) {
+      throw new Error('repository must look like "workspace/repo".');
+    }
 
     const me = await collector.currentUserUuid();
     const prs = [];
