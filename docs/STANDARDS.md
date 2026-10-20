@@ -33,11 +33,11 @@
 | Data | Rule | Code |
 |---|---|---|
 | Tokens, keys, passwords, connection strings, JWTs | Replaced by `[REDACTED:<CATEGORY>]` in every persisted text, patch, warning, tool error and log line | `SecretScanner` (single source; add patterns there) |
-| Emails, account UUIDs and HTML tags in PR title, description and commits | Replaced with `[REDACTED:EMAIL]` / `[REDACTED:UUID]`; tags stripped | `PIISanitizer` |
+| Emails, account UUIDs and HTML markup in PR title, description, commit subjects, branch names and comments | Replaced with `[REDACTED:EMAIL]` / `[REDACTED:UUID]`; known HTML tags and `<!-- -->` stripped (generics such as `List<string>` are kept) | `PIISanitizer` |
 | Author | Dropped unless `PRIVACY_REMOVE_AUTHOR=false` | `BitbucketAllowlistProjector` |
 | File paths | `PRIVACY_FILE_PATH_MODE`: `sanitized` (`first/.../last/two`, the default), `basename`, `opaque` (`file_NNNN`) or `full`. Applied to the index, file Markdown and diff headers. | `PathSanitizer`, `DataStore.saveRevision` |
 | Sensitive files (`.env`, keys, …) | Flagged high risk with `sensitive_configuration` | `SensitiveFilePolicy` |
-| PR comments | Same as PR text (`PIISanitizer` + `SecretScanner`). Author only when `PRIVACY_REMOVE_AUTHOR=false`. Inline paths per `PRIVACY_FILE_PATH_MODE` (omitted in `opaque`). Deleted comments dropped. | `PRContextService.getComments` |
+| PR comments | Same as PR text (`PIISanitizer` + `SecretScanner`). Author only when `PRIVACY_REMOVE_AUTHOR=false`. Inline paths per `PRIVACY_FILE_PATH_MODE` (omitted in `opaque`). Deleted comments dropped. Each comment capped at 4,000 chars with a `[truncated: …]` marker. | `PRContextService.getComments` |
 | CLI logs | Additionally strip emails, UUIDs and `workspace/repo` | `LogRedactor` |
 | Credentials | Exist only in env and memory. Never written to disk, logged or echoed. | `ConfigManager`, `bin/cli.js` |
 | Everything under `ai-context/` | Encrypted at rest (`PRC1`, AES-256-GCM). Readable only after `AccessGate.unlock()`. The repository UUID (key material) is never logged, returned or written. Only names stay plaintext: never put content in a file or folder name. | `secure-file.ts`, `access-gate.ts`, [ENCRYPTION.md](ENCRYPTION.md) |
