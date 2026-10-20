@@ -49,12 +49,12 @@ async function runSecurityTests() {
 
   // 2. PII Sanitizer Tests
   console.log('\n2. PII Sanitizer & Author Anonymization:');
-  const piiText = 'Contact author at john.doe@company.com or uuid {12345678-1234-1234-1234-1234567890ab}';
+  const piiText = 'Contact author at john.doe@example.com or uuid {12345678-1234-1234-1234-1234567890ab}';
   const sanitizedText = PIISanitizer.sanitizeText(piiText, tracker);
-  assert(!sanitizedText.includes('john.doe@company.com') && sanitizedText.includes('[REDACTED:EMAIL]'), 'Email address replaced with [REDACTED:EMAIL]');
+  assert(!sanitizedText.includes('john.doe@example.com') && sanitizedText.includes('[REDACTED:EMAIL]'), 'Email address replaced with [REDACTED:EMAIL]');
   assert(!sanitizedText.includes('{12345678-1234-1234-1234-1234567890ab}') && sanitizedText.includes('[REDACTED:UUID]'), 'UUID replaced with [REDACTED:UUID]');
 
-  const authorObj = { display_name: 'John Doe', raw: 'John Doe <john@company.com>', account_id: '557058:12345678-1234' };
+  const authorObj = { display_name: 'John Doe', raw: 'John Doe <john@example.com>', account_id: '557058:12345678-1234' };
   const removedAuthor = PIISanitizer.sanitizeAuthor(authorObj, true, tracker);
   assert(removedAuthor === null, 'Author metadata completely removed when remove_author is true');
 

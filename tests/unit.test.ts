@@ -114,7 +114,7 @@ index 1234567..89abcdef 100644
       target_branch: 'main',
       source_commit: srcCommit,
       target_commit: tgtCommit,
-      ticket_id: 'WEC-999',
+      ticket_id: 'PROJ-999',
       change_summary: { total_files: 1, total_additions: 1, total_deletions: 1, primary_kind: 'comment_only', kind_counts: { comment_only: 1 } },
       risk_summary: { overall_level: 'none', total_risk_tags: [], risky_files_count: 0 },
       stats: { files_changed: 1, commits_count: 1 },

@@ -6,6 +6,7 @@
 
 - The repo sits next to the hub: `<parent>/mcp-hub` and `<parent>/mcp-pr-companion`.
 - `.env` in this repo has at least `BITBUCKET_EMAIL` and `BITBUCKET_API_TOKEN`. The hub passes no secrets; the child reads its own `.env`, just as `mcp-server-logs` does.
+- `BITBUCKET_REPOSITORY` (with `BITBUCKET_WORKSPACE` for entries without a `workspace/` part) is optional for the server, since every tool takes a `pr_url` or `repository` argument. Set it for `list_my_open_prs` / `sync_my_open_prs` without `repository`, for `AUTO_SYNC_ON_START`, and for `node bin/cli.js check`, which requires it.
 - Run `node bin/cli.js prepare` once (it runs `npm ci` and the build), then `node bin/cli.js check`, which should be all ✓. A cold first start inside the hub would otherwise spend its first call on installing.
 
 ## 2. Child config (`config/private/mcps/mcp-pr-companion.json` in the hub)
@@ -62,7 +63,7 @@ Both entries start `enabled: false`. Set both to `true` once `.env` is filled an
 | Treats `isError` or text starting with `Error:` as failure | Every tool goes through `run()` in `src/mcp/tools.ts` |
 | Forwards tool schemas and annotations unchanged | zod `inputSchema` and annotations on every tool |
 | Prefixes tools with `pr__` | Child tool names have no prefix |
-| Serves the contract file as a prompt and passes on server instructions | `INSTRUCTIONS` stays short and generic |
+| Prefixes each tool description with `[pr via mcp-pr-companion]`, serves its contract `../mcp-hub/docs/mcps/mcp-pr-companion.md` as a prompt, and does **not** forward this server's `INSTRUCTIONS` | Agents under the hub learn the workflow from the hub contract; `INSTRUCTIONS` reaches only direct connections. Keep tool descriptions self-contained and the contract in step with `INSTRUCTIONS`. |
 | Applies a per-call timeout | Fetch-heavy tools are `get_pr_context_pack` and `sync_my_open_prs`; the others make at most one access-check request per repository per minute. `sync_my_open_prs` on a repository with many changed PRs can approach `timeoutSeconds`: call it per repository, or raise the timeout. |
 | Launches the child once per client session | `AUTO_SYNC_ON_START=true` (child `.env`, or `env` in the hub child config) syncs in the background at each launch |
 | Needs a read-only upstream health check for `scripts/smoke.py` (`docs/child-mcp-compatibility.md`) | `check_bitbucket_connection` returns `{"connected": true}` only when the token authenticates |
@@ -71,7 +72,7 @@ Renaming a tool, changing its parameters or moving the log path requires updatin
 
 ## 5. Sync from the hub
 
-`/mcp-hub:mcp-pr-companion siliconstack/wec.be sync toàn bộ PR về cho tôi` makes the agent call `pr__sync_my_open_prs` with `repository: "siliconstack/wec.be"`, then show the returned `prs` as a table (PR, title, status, ticket, risk, files). No hub code is involved: the hub skill routes the task, and the contract `docs/mcps/mcp-pr-companion.md` tells the agent which tool to use.
+`/mcp-hub:mcp-pr-companion <workspace>/<repo> sync all my PRs` makes the agent call `pr__sync_my_open_prs` with `repository: "<workspace>/<repo>"`, then show the returned `prs` as a table (PR, title, status, ticket, risk, files). No hub code is involved: the hub skill routes the task, and the contract `docs/mcps/mcp-pr-companion.md` tells the agent which tool to use.
 
 ## 6. Troubleshooting
 
@@ -81,7 +82,8 @@ Renaming a tool, changing its parameters or moving the log path requires updatin
 | `[LAUNCHER] … npm ci failed` / `Build failed` | Run `node bin/cli.js prepare` in this repo and read the output |
 | Tool result `Error: PR is not synced yet…` | Call `pr__get_pr_context_pack` first |
 | `Error: Access denied. BITBUCKET_EMAIL is not listed in ALLOWED_EMAILS` | Fix `ALLOWED_EMAILS` or the email in `.env` |
-| `Error: Failed to fetch PR metadata: HTTP 401` / `403` | Token expired or missing `read:pullrequest` / `read:repository` |
+| `Error: No access: Bitbucket rejected the credentials (HTTP 401)…` | Email or token wrong or expired: fix `.env` |
+| `Error: Failed to fetch PR metadata: HTTP 403` | Token missing `read:pullrequest` |
 | `Error: No access: this account cannot read <ws>/<repo>` | The account in `.env` lacks read access to that repository (the encrypted cache stays sealed) |
 | `Error: No access: cannot connect to Bitbucket` | Network down: the encrypted cache cannot be unlocked offline, by design |
 | Context pack starts with `Note: could not check Bitbucket…` | Network problem; cached data is shown. Retry, or pass `refresh: true` once the network is back. |
