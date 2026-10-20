@@ -11,7 +11,8 @@ export class MarkdownFormatter {
     manifest: PRManifestV4,
     commitsJsonl: string[],
     aiReading: AIReadingMetadata,
-    fileEntries: FileIndexEntryV4[] = []
+    fileEntries: FileIndexEntryV4[] = [],
+    coverage?: PRCoverageV4
   ): string {
     const lines: string[] = [];
     // Classifier entries are "files/file_0001.md"; agents pass the bare id to the file tools.
@@ -19,6 +20,15 @@ export class MarkdownFormatter {
 
     lines.push(`# PR Context Pack: ${manifest.title}`);
     lines.push('');
+
+    // A failed or cut download must be visible: otherwise missing files look like a small, safe PR.
+    for (const name of ['diff', 'diffstat', 'commits'] as const) {
+      const s = coverage?.sections[name];
+      if (!s || s.status === 'complete') continue;
+      const why = s.warning ? ` (${s.warning.length > 200 ? `${s.warning.slice(0, 200)}…` : s.warning})` : '';
+      lines.push(`Warning: ${name} ${s.status}${why}. Some changes may be missing; call get_pr_context_pack with refresh=true.`);
+    }
+    if (lines.length > 2) lines.push('');
     lines.push('## Read Strategy');
     lines.push(`Mode: ${aiReading.mode} (token budget: ${aiReading.token_budget})`);
     lines.push(`Reason: ${aiReading.reason}`);
@@ -35,11 +45,14 @@ export class MarkdownFormatter {
       const byId = new Map(fileEntries.map(f => [f.id, f]));
       lines.push(`## Changed since last sync (${since.previous_revision})`);
       if (since.changed_file_ids.length === 0) lines.push('Files: none (only commits or metadata moved)');
-      for (const id of since.changed_file_ids) {
+      // Capped: after a rebase every file can differ (invariant 4).
+      for (const id of since.changed_file_ids.slice(0, 30)) {
         const f = byId.get(id);
         lines.push(f ? `- ${id} \`${f.path}\` (${f.status})` : `- ${id}`);
       }
-      if (since.removed_paths.length > 0) lines.push(`No longer in the PR: ${since.removed_paths.join(', ')}`);
+      if (since.changed_file_ids.length > 30) lines.push(`- … ${since.changed_file_ids.length - 30} more changed files: use search_pr_files`);
+      const removed = since.removed_paths;
+      if (removed.length > 0) lines.push(`No longer in the PR: ${removed.slice(0, 20).join(', ')}${removed.length > 20 ? ` (+${removed.length - 20} more)` : ''}`);
       lines.push('');
     }
     lines.push('## Overview');
@@ -88,13 +101,16 @@ export class MarkdownFormatter {
     lines.push('| File ID | Path | Kind | Status | +/- | Risk Tags |');
     lines.push('| --- | --- | --- | --- | --- | --- |');
 
-    ContextModeClassifier.rank(fileEntries).forEach((f) => {
+    // Capped at 200 rows: the table is appended to the context pack by include_file_table (invariant 4).
+    const ranked = ContextModeClassifier.rank(fileEntries);
+    ranked.slice(0, 200).forEach((f) => {
       const riskTagsStr = f.risk_tags.length > 0 ? f.risk_tags.join(', ') : 'none';
       const shownPath = f.old_path && f.old_path !== f.path ? `${f.old_path} → ${f.path}` : f.path;
       lines.push(
         `| ${f.id} | ${shownPath} | ${f.change_kind} | ${f.status} | +${f.additions}/-${f.deletions} | ${riskTagsStr} |`
       );
     });
+    if (ranked.length > 200) lines.push('', `${ranked.length - 200} more files: use search_pr_files to list them.`);
 
     return lines.join('\n');
   }

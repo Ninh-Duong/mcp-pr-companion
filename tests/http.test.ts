@@ -22,3 +22,11 @@ assert.equal(calls, 3, 'gives up after 2 retries');
 assert.equal(await run([401]), 401);
 assert.equal(calls, 1, '401 is never retried');
 console.log('  ✓ fetchWithRetry retries 429/5xx at most twice and leaves other statuses alone');
+
+// No Retry-After header: back off (regression: Number(null) === 0 retried instantly)
+globalThis.fetch = (async () => new Response('{}', { status: calls++ === 0 ? 503 : 200 })) as typeof fetch;
+calls = 0;
+const started = Date.now();
+assert.equal((await fetchWithRetry('https://api.bitbucket.org/2.0/x', {})).status, 200);
+assert.ok(Date.now() - started >= 900, `waited ${Date.now() - started} ms`);
+console.log('  ✓ without Retry-After the first retry waits the 1 s backoff');

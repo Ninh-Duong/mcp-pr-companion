@@ -7,6 +7,7 @@ import { BitbucketAllowlistProjector } from '../src/core/bitbucket/bitbucket.all
 import { ContextModeClassifier } from '../src/core/analyzer/context-mode.classifier.ts';
 import { TextNormalizer } from '../src/utils/text.normalizer.ts';
 import { SymbolExtractor } from '../src/core/analyzer/symbol.extractor.ts';
+import { DiffParser } from '../src/core/analyzer/diff.parser.ts';
 
 const PREFIXES = ['WCE-', 'PROJ-', 'JIRA-'];
 
@@ -49,6 +50,14 @@ assert.deepEqual([view.tags, view.level], [['database_object'], 'medium']);
 assert.deepEqual(risk('Codes/Db/Views/VehicleV.sql', ['    , v.OriginalDeliveryDate']).tags, [], 'a column added inside a view body is ordinary logic');
 console.log('  ✓ SQL: tables/indexes are database_schema, views/procedures/functions are database_object');
 
+// SQL rules apply to SQL only, and not to comments or temp tables (regression: "// drop index …" in C# was high risk).
+assert.deepEqual(risk('src/Jobs/Backfill.cs', ['// drop index after backfill', 'var x = 1;']).tags, []);
+assert.deepEqual(risk('src/ui/model.ts', ['// create view model', 'const a = 1;']).tags, []);
+assert.deepEqual(risk('Codes/Db/Procs/Report.sql', ['CREATE TABLE #tmp (Id INT)', '-- DROP INDEX IX_Old']).tags, []);
+assert.ok(risk('db/views/v.sql', ['CREATE OR REPLACE VIEW public.v AS SELECT 1']).tags.includes('database_object'));
+assert.ok(risk('db/views/mv.sql', ['CREATE MATERIALIZED VIEW sales_mv AS SELECT 1']).tags.includes('database_object'));
+console.log('  ✓ SQL risk ignores comments, temp tables and non-SQL files; knows OR REPLACE / MATERIALIZED');
+
 // Rename without edits: its own kind, so the Read Strategy can rank it last.
 const moved = { oldPath: 'Codes/Db/AuditLogV.sql', newPath: 'Codes/Db/AuditLog/AuditLogV.sql', status: 'renamed' as const, isBinary: false, additions: 0, deletions: 0, headerLines: [], hunks: [] };
 assert.equal(ChangeClassifier.classify(moved).kind, 'rename_only');
@@ -76,6 +85,15 @@ assert.deepEqual(ids(reading.optional_next_files), ['file_0001']);
 assert.ok(reading.skip_categories.includes('low_priority: file_0006 (test_only), file_0007 (rename_only)'));
 console.log('  ✓ Read Strategy ranks new and large logic first and lists low-value files by id');
 
+// A must-read tag beats a low-value kind: a renamed appsettings with secrets is not "low priority".
+const sensitive = ContextModeClassifier.classify({
+  change_summary: { total_files: 2, total_additions: 50, total_deletions: 0, primary_kind: 'functional_logic', kind_counts: {} },
+  risk_summary: { overall_level: 'high', total_risk_tags: ['sensitive_configuration'], risky_files_count: 1 }
+} as any, [entry('file_0001', 'functional_logic', 'modified', 50), entry('file_0002', 'rename_only', 'modified', 0, ['sensitive_configuration'])]);
+assert.ok(ids(sensitive.required_next_files).includes('file_0002'));
+assert.ok(!sensitive.skip_categories.some(s => s.includes('file_0002')));
+console.log('  ✓ sensitive files are read first even when renamed or whitespace-only');
+
 // Symbols: real C# changes inside private methods and SQL objects used to yield none.
 const hunkDiff = (path: string, header: string, lines: Array<['add' | 'context', string]>) => ({
   oldPath: path, newPath: path, status: 'modified' as const, isBinary: false, additions: lines.length, deletions: 0, headerLines: [],
@@ -93,6 +111,26 @@ const sql = SymbolExtractor.extractSymbols(hunkDiff('Codes/Db/X.sql', '@@ -0,0 +
 ]), false);
 assert.deepEqual(sql.map(s => [s.kind, s.name]), [['sql_index', 'IX_AuditLog_DocKey'], ['sql_view', 'dbo.AuditLogTemplateCrcV']]);
 console.log('  ✓ symbols: any C# access modifier, hunk-header scope, SQL objects');
+
+const sqlNames = (path: string, lines: string[]) =>
+  SymbolExtractor.extractSymbols(hunkDiff(path, '@@ -0,0 +1 @@', lines.map(l => ['add', l] as ['add', string])), false).map(s => `${s.kind}:${s.name}`);
+assert.deepEqual(sqlNames('db/t.sql', ['CREATE TABLE IF NOT EXISTS users (id int);', 'CREATE INDEX CONCURRENTLY ix_a ON t (a);', 'CREATE OR REPLACE VIEW public."Users" AS', '-- create index on name']),
+  ['sql_table:users', 'sql_index:ix_a', 'sql_view:public.Users']);
+assert.deepEqual(sqlNames('src/a.ts', ['// create index on name']), []);
+console.log('  ✓ SQL symbols skip IF NOT EXISTS / CONCURRENTLY, unquote names, ignore comments and non-SQL files');
+
+// git quotes non-ASCII paths with octal escapes; they must match Bitbucket's diffstat (decoded) paths.
+const quoted = DiffParser.parse(String.raw`diff --git "a/docs/caf\303\251.md" "b/docs/caf\303\251.md"
+index 1..2 100644
+--- "a/docs/caf\303\251.md"
++++ "b/docs/caf\303\251.md"
+@@ -1 +1 @@
+-a
++b
+`).files[0];
+assert.deepEqual([quoted.oldPath, quoted.newPath, quoted.hunks.length], ['docs/café.md', 'docs/café.md', 1]);
+assert.ok(quoted.headerLines.every(l => !l.includes('\\303')) && quoted.headerLines[0] === 'diff --git a/docs/café.md b/docs/café.md', quoted.headerLines.join('|'));
+console.log('  ✓ git-quoted paths are decoded (octal UTF-8) in paths and header lines');
 
 // Description text: Bitbucket's "\[x\]" escapes and trailing zero-width characters are noise for an agent.
 assert.equal(TextNormalizer.normalize('* \\[Eagers\\] \\[WC-36\\]: done\n\n‌\n').text, '* [Eagers] [WC-36]: done');

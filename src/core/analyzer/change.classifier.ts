@@ -56,6 +56,16 @@ export class ChangeClassifier {
       };
     }
 
+    // Lines changed but no patch (download failed or paths did not match): unknown, never "whitespace".
+    if (fileDiff.hunks.length === 0) {
+      return {
+        kind: 'unknown',
+        functionalChange: true,
+        confidence: 0.5,
+        evidence: ['Patch not available for this file']
+      };
+    }
+
     // 1. Generated Code Detection
     if (
       basename.endsWith('.designer.cs') ||
@@ -101,7 +111,7 @@ export class ChangeClassifier {
         kind: isDepLock ? 'dependency_change' : 'configuration',
         functionalChange: true,
         confidence: 0.95,
-        evidence: [`Project configuration or dependency manifest modified: ${basename}`]
+        evidence: ['Project configuration or dependency manifest modified'] // no file name: evidence ignores PRIVACY_FILE_PATH_MODE
       };
     }
 

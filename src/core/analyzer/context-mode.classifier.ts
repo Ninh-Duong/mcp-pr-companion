@@ -14,16 +14,19 @@ export interface AIReadingMetadata {
 
 /** Kinds a reviewer rarely needs to open: listed by id under "low_priority", never in Read next / Optional. */
 const LOW_VALUE_KINDS = ['test_only', 'unit_test', 'generated_only', 'rename_only', 'formatting_only', 'whitespace_only', 'comment_only', 'documentation_only'];
-/** Files with these tags are always in Read next, whatever their size. */
-const MUST_READ_TAGS = ['auth_security', 'database_schema', 'public_api', 'sensitive_configuration'];
+/** Files with these tags are always in Read next, whatever their size or kind. */
+const MUST_READ_TAGS = ['auth_security', 'database_schema', 'public_api', 'sensitive_configuration', 'merge_conflict'];
+/** Read next never grows past this, however many must-read files there are. */
+const MAX_REQUIRED = 8;
 
 export class ContextModeClassifier {
   /** Review priority of one file: change volume (capped), risk tags, and brand-new logic. Shared with files.md ordering. */
   static score(f: FileIndexEntryV4): number {
-    if (LOW_VALUE_KINDS.includes(f.change_kind)) return -1;
     const has = (...tags: string[]) => tags.some(t => f.risk_tags.includes(t));
+    // A renamed appsettings or a whitespace-only .env edit is still a must-read.
+    if (LOW_VALUE_KINDS.includes(f.change_kind) && !has(...MUST_READ_TAGS)) return -1;
     return Math.min(f.additions + f.deletions, 200)
-      + (has('auth_security', 'database_schema', 'public_api', 'sensitive_configuration') ? 60 : 0)
+      + (has(...MUST_READ_TAGS) ? 60 : 0)
       + (has('secret_config', 'concurrency_transaction', 'database_object') ? 40 : 0)
       + (f.status === 'added' && f.change_kind === 'functional_logic' ? 30 : 0)
       + (has('dependency') ? 10 : 0);
@@ -55,7 +58,7 @@ export class ContextModeClassifier {
 
     // Read next: the top `count`, plus every must-read file; Optional: the next five.
     const pick = (count: number) => {
-      const required = [...priorityFiles.slice(0, count), ...priorityFiles.slice(count).filter(f => f.risk_tags.some(t => MUST_READ_TAGS.includes(t)))];
+      const required = [...priorityFiles.slice(0, count), ...priorityFiles.slice(count).filter(f => f.risk_tags.some(t => MUST_READ_TAGS.includes(t)))].slice(0, MAX_REQUIRED);
       return {
         required_next_files: required.map(ref),
         optional_next_files: priorityFiles.filter(f => !required.includes(f)).slice(0, 5).map(ref)

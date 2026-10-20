@@ -32,7 +32,8 @@ let userStatus = 200;
 let repoStatus = 200;
 let commentsStatus = 200;
 let statusesStatus = 200;
-const calls: Record<string, number> = { metadata: 0, diff: 0 };
+let metadataStatus = 200;
+const calls: Record<string, number> = { metadata: 0, diff: 0, comments: 0 };
 globalThis.fetch = (async (input: string | URL) => {
   const url = String(input);
   const ok = (body: unknown) => new Response(typeof body === 'string' ? body : JSON.stringify(body), { status: 200 });
@@ -44,13 +45,14 @@ globalThis.fetch = (async (input: string | URL) => {
   }
   if (url.endsWith('/pullrequests/7')) {
     calls.metadata++;
+    if (metadataStatus !== 200) return new Response('{}', { status: metadataStatus, statusText: 'Internal Server Error' });
     return ok({
       id: 7,
       title: 'Add invoice export endpoint',
       description: 'Adds a public export API.',
       state: 'OPEN',
       draft: true,
-      source: { branch: { name: 'feature/WCE-12-export' }, commit: { hash: sourceHash } },
+      source: { branch: { name: 'feature/WCE-12-export-ops@example.com' }, commit: { hash: sourceHash } },
       destination: { branch: { name: 'main' }, commit: { hash: 'bbbbbbbbbbbb' } },
       participants: [
         { role: 'REVIEWER', approved: true, state: 'approved', user: { type: 'user', display_name: 'Alice Approver' } },
@@ -63,26 +65,28 @@ globalThis.fetch = (async (input: string | URL) => {
     return ok({ values: [
       { key: 'build', name: 'Pipeline #12', state: 'SUCCESSFUL', updated_on: '2026-01-01T00:00:00Z', commit: { hash: sourceHash } },
       { key: 'build', name: 'Pipeline #13', state: 'FAILED', description: '2 tests failed, ask qa@example.com', updated_on: '2026-01-02T00:00:00Z', commit: { hash: sourceHash } },
-      { key: 'lint', name: 'Lint', state: 'SUCCESSFUL', updated_on: '2026-01-01T00:00:00Z', commit: { hash: '999999999999' } }
+      { key: 'lint', name: 'Lint', state: 'SUCCESSFUL', updated_on: '2026-01-01T00:00:00Z', commit: { hash: '999999999999' } },
+      { name: 'Sonar', state: 'INPROGRESS', updated_on: '2026-01-01T00:00:00Z', commit: { hash: sourceHash } }
     ] });
   }
   if (url.includes('/pullrequests/7/comments')) {
+    calls.comments++;
     if (commentsStatus !== 200) return new Response('{}', { status: commentsStatus, statusText: 'Internal Server Error' });
     return ok({ values: [
-      { id: 3, parent: { id: 1 }, content: { raw: 'done, token ATATT3xFfGF0abcdefghijklmnop0123' }, resolution: { type: 'resolved' }, created_on: '2026-01-02' },
+      { id: 3, parent: { id: 1 }, content: { raw: 'done, token ATATT3xFfGF0abcdefghijklmnop0123 ' + 'x'.repeat(5000) }, resolution: { type: 'resolved' }, created_on: '2026-01-02' },
       { id: 1, content: { raw: 'Please rename this, ping dev@example.com' }, user: { type: 'app_user', display_name: 'Reviewer' }, created_on: '2026-01-01', inline: { path: REAL_PATH, to: 10 } },
       { id: 2, deleted: true, content: { raw: 'gone' } }
     ] });
   }
   if (url.includes('/pullrequests?q=')) {
     return ok({ values: [{ id: 7, title: 'Add invoice export endpoint', state: 'OPEN', author: { uuid: '{u}' }, updated_on: '2026-01-03',
-      source: { branch: { name: 'feature/WCE-12-export' }, commit: { hash: sourceHash } }, destination: { branch: { name: 'main' }, commit: { hash: 'bbbbbbbbbbbb' } } }] });
+      source: { branch: { name: 'feature/WCE-12-export-ops@example.com' }, commit: { hash: sourceHash } }, destination: { branch: { name: 'main' }, commit: { hash: 'bbbbbbbbbbbb' } } }] });
   }
   if (url.includes('/commits')) {
     // 23 commits, newest first; two are merges (two parents).
     return ok({ values: Array.from({ length: 23 }, (_, i) => ({
       hash: `${i}`.padStart(12, 'e'),
-      message: i === 0 ? 'WCE-12 export invoices' : i === 3 || i === 7 ? `Merge branch 'main' ${i}` : `step ${i}`,
+      message: i === 0 ? 'WCE-12 export invoices' : i === 3 || i === 7 ? `Merge branch 'main' ${i}` : i === 1 ? 'fix creds for bob@corp.example.com ATATT3xFfGF0commitsecret0123' : `step ${i}`,
       parents: i === 3 || i === 7 ? [{}, {}] : [{}]
     })) });
   }
@@ -124,6 +128,11 @@ assert.match(pack.text, /## Commits \(10 of 23 shown, newest first; merge commit
 assert.doesNotMatch(pack.text, /Merge branch/);
 console.log('  ✓ commit list says how many are shown and skips merges');
 
+// 2b'. Commit subjects and branch names are sanitized like every other text (regression: stored raw)
+assert.match(pack.text, /fix creds for \[REDACTED:EMAIL\]/);
+assert.ok(!/bob@corp|ATATT3xFfGF0commitsecret|ops@example\.com/.test(pack.text), 'no email or token from commits or branch');
+console.log('  ✓ commit subjects and branch names are sanitized in the pack');
+
 // 2c. Open review threads are summarized live in the pack (sanitized, mapped to file ids); a comments outage never fails it
 assert.match(pack.text, /## Review threads \(live\)\nOpen: 1 \(1 from apps\) · Resolved: 0\n- file_0001 \(1 open, 1 from apps, line 10\): Please rename this, ping/);
 assert.ok(!pack.text.includes('dev@example.com'), 'thread text is sanitized');
@@ -135,7 +144,8 @@ assert.match(noComments.text, /## Review threads \(live\)\nUnavailable: /);
 console.log('  ✓ context pack lists open review threads by file id, and survives a comments outage');
 
 // 2d. Approvals and build status, live: counts only (no names), latest status per key, sanitized text
-assert.match(pack.text, /## Review status \(live\)\nApprovals: 1 · Changes requested: 1 · Participants: 2 \(reviewers: 1\)\nBuild: 1 failed, 1 passed, 0 running\n- FAILED Pipeline #13: 2 tests failed, ask .*\n- SUCCESSFUL Lint \(older commit\)/);
+// (also: live state/draft, statuses without a key kept by name)
+assert.match(pack.text, /## Review status \(live\)\nState: OPEN \(draft\)\nApprovals: 1 · Changes requested: 1 · Participants: 2 \(reviewers: 1\)\nBuild: 1 failed, 1 passed, 1 running\n- FAILED Pipeline #13: 2 tests failed, ask .*\n- INPROGRESS Sonar\n- SUCCESSFUL Lint \(older commit\)/);
 assert.ok(!/Pipeline #12|Alice|Bot Requester|qa@example\.com/.test(pack.text), 'no superseded status, names or emails');
 statusesStatus = 500;
 const noBuild = await call('get_pr_context_pack', { pr_url: PR_URL });
@@ -143,6 +153,17 @@ statusesStatus = 200;
 assert.ok(!noBuild.isError);
 assert.match(noBuild.text, /Approvals: 1 .*\nBuild: unavailable \(/);
 console.log('  ✓ context pack shows approvals and the latest build status per pipeline, and survives a statuses outage');
+
+// 2e. Bitbucket unreachable: cached pack with a note, live sections skipped (regression: ~4×30 s of timeouts)
+metadataStatus = 500;
+const commentCalls = calls.comments;
+const offline = await call('get_pr_context_pack', { pr_url: PR_URL });
+metadataStatus = 200;
+assert.ok(!offline.isError);
+assert.match(offline.text, /^Note: could not check Bitbucket/);
+assert.match(offline.text, /## Live review data\nSkipped: Bitbucket could not be reached\./);
+assert.equal(calls.comments, commentCalls, 'no comments request while offline');
+console.log('  ✓ offline: cached pack with a note, no live requests');
 
 // 3. Read Strategy lists the files to open next (regression: it read a non-existent field)
 assert.match(pack.text, /Read next: .*file_0001/);
@@ -230,17 +251,27 @@ assert.equal(inline.line, 10);
 assert.ok(!inline.text.includes('dev@example.com') && !('author' in inline), 'email redacted, author removed by default');
 assert.deepEqual([inline.author_kind, comments.comments[1].author_kind], ['app', 'person'], 'account kind is kept even without author names');
 assert.ok(!comments.comments[1].text.includes('ATATT3x') && comments.comments[1].resolved === true);
+assert.match(comments.comments[1].text, /\n\[truncated: 4000 of \d+ chars\]$/, 'one huge bot comment cannot flood the page');
+assert.ok(comments.comments[1].text.length < 4100);
 assert.equal(JSON.parse((await call('get_pr_comments', { pr_url: PR_URL, include_resolved: false })).text).total, 1);
 const firstPage = JSON.parse((await call('get_pr_comments', { pr_url: PR_URL, limit: 1 })).text);
 assert.equal(firstPage.comments.length, 1);
 assert.equal(firstPage.next_offset, 1);
 console.log('  ✓ get_pr_comments sanitizes, maps inline comments to file ids and pages');
 
+// 9c'. repository must be exactly "workspace/repo" (it goes into the API URL and the local folder lookup)
+for (const repository of ['../etc', 'acme/../x', 'acme/demo?x=1', 'acme/demo#a', 'acme']) {
+  const bad = await call('list_my_open_prs', { repository });
+  assert.ok(bad.isError && /workspace\/repo/.test(bad.text), repository);
+}
+console.log('  ✓ repository arguments with "..", "?", "#" or no slash are rejected');
+
 // 9c. My open PRs
 const mine = JSON.parse((await call('list_my_open_prs', { repository: 'acme/demo-repo' })).text);
 assert.equal(mine.total, 1);
 assert.equal(mine.prs[0].pr_url, PR_URL);
 assert.ok(['cached', 'outdated'].includes(mine.prs[0].local));
+assert.ok(!JSON.stringify(mine).includes('ops@example.com'), 'branch names are sanitized in list_my_open_prs');
 const noRepo = await call('list_my_open_prs', {});
 assert.ok(noRepo.isError && /BITBUCKET_REPOSITORY/.test(noRepo.text));
 console.log('  ✓ list_my_open_prs returns ready-to-use pr_url values');

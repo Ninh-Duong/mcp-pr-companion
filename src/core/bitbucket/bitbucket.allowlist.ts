@@ -24,6 +24,7 @@ export interface ProjectedCommit {
 
 export interface ProjectedDiffstatItem {
   status: string;
+  conflict?: boolean;
   lines_added: number;
   lines_removed: number;
   old_path?: string;
@@ -94,8 +95,12 @@ export class BitbucketAllowlistProjector {
   static projectDiffstat(rawDiffstat: any[] = []): ProjectedDiffstatItem[] {
     if (!Array.isArray(rawDiffstat)) return [];
 
+    // Bitbucket also reports "merge conflict", "local deleted", "remote deleted", "local and remote deleted";
+    // the v4 index only knows four statuses, so map them and keep the conflict as a flag.
+    const KNOWN = ['added', 'modified', 'removed', 'renamed'];
     return rawDiffstat.map((item: any) => ({
-      status: item.status || 'modified',
+      status: String(item.status || 'modified').includes('deleted') ? 'removed' : KNOWN.includes(item.status) ? item.status : 'modified',
+      ...(item.status === 'merge conflict' ? { conflict: true } : {}),
       lines_added: item.lines_added || 0,
       lines_removed: item.lines_removed || 0,
       old_path: item.old?.path,

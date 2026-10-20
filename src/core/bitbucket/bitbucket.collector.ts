@@ -66,12 +66,15 @@ export class BitbucketCollector {
    * One metadata request: the PR's current source and target commit hashes (used to detect stale revisions),
    * plus its raw participants (approvals) so callers need no second request.
    */
-  async getHeadCommits(workspace: string, repoSlug: string, prId: number): Promise<{ source: string; destination: string; participants: any[] }> {
+  async getHeadCommits(workspace: string, repoSlug: string, prId: number): Promise<{ source: string; destination: string; participants: any[]; state: string; draft: boolean }> {
     const metadata = await this.client.getPRMetadata(workspace, repoSlug, prId);
     return {
       source: metadata.source?.commit?.hash || 'unknown_source',
       destination: metadata.destination?.commit?.hash || 'unknown_dest',
-      participants: Array.isArray(metadata.participants) ? metadata.participants : []
+      participants: Array.isArray(metadata.participants) ? metadata.participants : [],
+      // Live state: a PR merged or declined after its last sync keeps "OPEN" in the stored pack.
+      state: String(metadata.state || 'OPEN'),
+      draft: Boolean(metadata.draft)
     };
   }
 

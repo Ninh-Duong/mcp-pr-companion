@@ -54,9 +54,8 @@ export class DataStore {
     const sanitizedTitle = SecretScanner.scanAndRedact(PIISanitizer.sanitizeText(projectedMeta.title, tracker), tracker);
     const sanitizedDesc = SecretScanner.scanAndRedact(PIISanitizer.sanitizeText(projectedMeta.description, tracker), tracker);
 
-    const commitSubjects: string[] = projectedCommits.map(c =>
-      SecretScanner.scanAndRedact(PIISanitizer.sanitizeText(c.subject, tracker), tracker)
-    );
+    const clean = (text: string) => SecretScanner.scanAndRedact(PIISanitizer.sanitizeText(text, tracker), tracker);
+    const commitSubjects: string[] = projectedCommits.map(c => clean(c.subject));
 
     const ticketId = GitParser.extractTicketId(
       projectedMeta.source.branch.name,
@@ -112,17 +111,22 @@ export class DataStore {
 
       const classification = ChangeClassifier.classify(matchedDiff);
       const risk = RiskAnalyzer.analyze(matchedDiff, classification);
-      // Names and signatures are raw diff text: scan them like the patch.
+      // Names and signatures are raw diff text: scan them like the patch, then cut (a cut token would escape the scan).
       const symbols = SymbolExtractor.extractSymbols(matchedDiff, classification.kind === 'comment_only').map(s => ({
         ...s,
-        name: SecretScanner.scanAndRedact(s.name, tracker),
-        ...(s.signature ? { signature: SecretScanner.scanAndRedact(s.signature, tracker) } : {})
+        name: SecretScanner.scanAndRedact(s.name).slice(0, 120),
+        ...(s.signature ? { signature: SecretScanner.scanAndRedact(s.signature).slice(0, 300) } : {})
       }));
 
       if (isSensitive) {
         risk.tags.push('sensitive_configuration');
         risk.level = 'high';
         risk.evidence.push('File contains sensitive security configuration');
+      }
+      if (item.conflict) {
+        risk.tags.push('merge_conflict');
+        risk.level = 'high';
+        risk.evidence.push('Bitbucket reports a merge conflict on this file');
       }
 
       kindCounts[classification.kind] = (kindCounts[classification.kind] || 0) + 1;
@@ -152,6 +156,8 @@ export class DataStore {
       // real paths: rewrite them to the sanitized form so file_path_mode holds for patches too.
       const pathPairs: Array<[string, string]> = [[originalPath, sanitizedPath]];
       if (item.old_path && item.old_path !== originalPath) pathPairs.push([item.old_path, PathSanitizer.sanitize(item.old_path, privacy.file_path_mode, fileIdStr)]);
+      // Longest first: when one path is a suffix of the other, replacing the short one first corrupts the long one.
+      pathPairs.sort((a, b) => b[0].length - a[0].length);
       const headerLines = matchedDiff.headerLines.map(line => pathPairs.reduce((l, [real, safe]) => l.split(real).join(safe), line));
       let patchDiff = headerLines.join('\n') + '\n';
       for (const hunk of matchedDiff.hunks) {
@@ -223,8 +229,8 @@ export class DataStore {
       description: sanitizedDesc,
       state: projectedMeta.state || 'OPEN',
       is_draft: Boolean(projectedMeta.draft),
-      source_branch: projectedMeta.source.branch.name,
-      target_branch: projectedMeta.destination.branch.name,
+      source_branch: clean(projectedMeta.source.branch.name),
+      target_branch: clean(projectedMeta.destination.branch.name),
       source_commit: rawRev.sourceHash,
       target_commit: rawRev.destinationHash,
       ticket_id: ticketId !== 'N/A' ? ticketId : null,
@@ -260,7 +266,8 @@ export class DataStore {
       ...this.diffAgainstActive(workspace, repoSlug, prId, rawRev, fileEntries, fileChangesMap)
     };
 
-    const commitsJsonl = projectedCommits.map(c => JSON.stringify(c));
+    // The sanitized subjects, never the raw ones (they only fed ticket detection before).
+    const commitsJsonl = projectedCommits.map((c, i) => JSON.stringify({ hash: c.hash, subject: commitSubjects[i] }));
 
     const result = RevisionWriter.writeRevision(
       workspace,

@@ -4,6 +4,7 @@ import { PRListNormalizer, DiscoveredPR } from './pr-list.normalizer.js';
 import { DiscoveryCache } from './discovery-cache.js';
 import { normalizeUuid } from '../auth/current-user.resolver.js';
 import { PROwnershipPolicy } from '../auth/pr-ownership.policy.js';
+import { SecretScanner } from '../privacy/secret.scanner.js';
 
 export interface DiscoveryContext {
   identity: {
@@ -51,11 +52,18 @@ export class PRDiscoveryService {
     }
 
     const client = new BitbucketClient(reqEmail, reqToken);
-    let rawValues = (await client.listPullRequests(reqWorkspace, reqRepoSlug, PRFilterBuilder.buildQuery(normUserUuid))).values;
+    const byAuthor = await client.listPullRequests(reqWorkspace, reqRepoSlug, PRFilterBuilder.buildQuery(normUserUuid));
+    let rawValues = byAuthor.values;
 
     // Client-side fallback if the server-side author query returned nothing (or failed)
     if (rawValues.length === 0) {
-      rawValues = (await client.listPullRequests(reqWorkspace, reqRepoSlug, 'state="OPEN"')).values;
+      const open = await client.listPullRequests(reqWorkspace, reqRepoSlug, 'state="OPEN"');
+      // Pagination turns HTTP errors into warnings: an empty, incomplete answer is a failure, not "no PRs".
+      if (!open.isComplete && open.values.length === 0) {
+        const why = open.warnings[0] ?? byAuthor.warnings[0] ?? 'unknown error';
+        throw new Error(`Could not list pull requests for ${reqWorkspace}/${reqRepoSlug}: ${SecretScanner.scanAndRedact(why)}`);
+      }
+      rawValues = open.values;
     }
 
     // MANDATORY Client-Side Ownership Filter Across All Branches
