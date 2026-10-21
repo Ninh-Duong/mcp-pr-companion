@@ -7,6 +7,7 @@
 - The repo sits next to the hub: `<parent>/mcp-hub` and `<parent>/mcp-pr-companion`.
 - `.env` in this repo has at least `BITBUCKET_EMAIL` and `BITBUCKET_API_TOKEN`. The hub passes no secrets; the child reads its own `.env`, just as `mcp-server-logs` does.
 - `BITBUCKET_REPOSITORY` (with `BITBUCKET_WORKSPACE` for entries without a `workspace/` part) is optional for the server, since every tool takes a `pr_url` or `repository` argument. Set it for `list_my_open_prs` / `sync_my_open_prs` without `repository`, for `AUTO_SYNC_ON_START`, and for `node bin/cli.js check`, which requires it.
+- `BITBUCKET_REPOSITORY` is also required by `node bin/cli.js sync <mode>`; the command syncs owned PRs across every configured repository.
 - Run `node bin/cli.js prepare` once (it runs `npm ci` and the build), then `node bin/cli.js check`, which should be all ✓. A cold first start inside the hub would otherwise spend its first call on installing.
 
 ## 2. Child config (`config/private/mcps/mcp-pr-companion.json` in the hub)
@@ -44,6 +45,7 @@ Copy the hub template `config/mcps/mcp-pr-companion.example.json`:
       { "server": "mcp-pr-companion", "name": "get_pr_file_context", "exposeAs": "pr__get_pr_file_context" },
       { "server": "mcp-pr-companion", "name": "get_pr_file_changes", "exposeAs": "pr__get_pr_file_changes" },
       { "server": "mcp-pr-companion", "name": "get_pr_sync_status", "exposeAs": "pr__get_pr_sync_status" },
+      { "server": "mcp-pr-companion", "name": "list_synced_prs", "exposeAs": "pr__list_synced_prs" },
       { "server": "mcp-pr-companion", "name": "get_pr_comments", "exposeAs": "pr__get_pr_comments" },
       { "server": "mcp-pr-companion", "name": "list_my_open_prs", "exposeAs": "pr__list_my_open_prs" },
       { "server": "mcp-pr-companion", "name": "sync_my_open_prs", "exposeAs": "pr__sync_my_open_prs" },
@@ -72,7 +74,7 @@ Renaming a tool, changing its parameters or moving the log path requires updatin
 
 ## 5. Sync from the hub
 
-`/mcp-hub:mcp-pr-companion <workspace>/<repo> sync all my PRs` makes the agent call `pr__sync_my_open_prs` with `repository: "<workspace>/<repo>"`, then show the returned `prs` as a table (PR, title, status, ticket, risk, files). No hub code is involved: the hub skill routes the task, and the contract `docs/mcps/mcp-pr-companion.md` tells the agent which tool to use.
+The terminal command `node bin/cli.js sync <open|draft|merged|declined|all>` syncs the selected PR groups for the configured account across `BITBUCKET_REPOSITORY`. The MCP tool `pr__sync_my_open_prs` keeps its existing open-only behavior. Agents can call `pr__list_synced_prs` with a status filter to find locally cached PRs and then read them by `pr_url`.
 
 ## 6. Troubleshooting
 

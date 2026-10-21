@@ -10,7 +10,9 @@ Everything this project stores under `ai-context/` is encrypted. Opening the fol
 | A copied or backed-up `ai-context/` folder on a machine without working credentials | Text returned by the tools: agents receive plaintext, and so does the LLM provider behind them |
 | Tampering: any changed byte makes the file unreadable instead of silently wrong | `Logs/` (redacted, not encrypted) and `.env` itself |
 
-**Still visible in plaintext:** folder and file names (workspace, repository slug, PR number, file ids such as `file_0003`, revision ids built from commit hashes) and each file's header (`workspace`, `repo`, `pr`, salt).
+**Still visible in plaintext:** folder and file names (workspace, repository slug, PR status, PR number, file ids such as `file_0003`, revision ids built from commit hashes) and each file's header (`workspace`, `repo`, `pr`, salt).
+
+The canonical path is `ai-context/[<AI_CONTEXT_COMPANY>/]<workspace>/<repo>/<open|draft|merged|declined>/pr_<id>/`. The directory records the state at the last successful sync. Bitbucket draft PRs have state `OPEN` and are stored under `draft`; `open` contains only non-draft PRs. There is no `all` directory. During migration, readers also search the previous status-less layout and legacy roots.
 
 ## 2. File format (`src/core/storage/secure-file.ts`)
 
@@ -68,7 +70,9 @@ sequenceDiagram
 | AI agent (direct or via mcp-hub) | The MCP tools (`get_pr_context_pack`, `search_pr_files`, `get_pr_file_context`, …). Never open `ai-context/` files directly. |
 | Developer | `node bin/cli.js cmd` → log in → **View synced PR context (decrypted)**. It picks a synced PR and prints `context.md` or one file's detail. |
 
-Plaintext is printed or returned and never written back to disk.
+Plaintext is printed or returned and never written back to disk. `list_synced_prs` lists local revisions by status after unlocking their repositories.
+
+When a PR changes state or draft status, the next successful sync writes and validates the new encrypted revision first, then moves the old encrypted PR directory to the new status path. It does not decrypt or rewrite the old revision files during the move. If migration fails, the old directory remains readable and a later sync can retry.
 
 ## 6. Limits
 

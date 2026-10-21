@@ -39,7 +39,10 @@ export class GenerationJob {
       if (active) {
         updateStage('metadata', 15);
         const head = await collector.getHeadCommits(workspace, repoSlug, prId);
-        if (head.source === active.current.source_commit && head.destination === active.current.target_commit) {
+        if (head.source === active.current.source_commit &&
+          head.destination === active.current.target_commit &&
+          head.state.toUpperCase() === active.manifest?.state.toUpperCase() &&
+          head.isDraft === active.manifest?.is_draft) {
           jobState.status = 'cached';
           updateStage('complete', 100);
           return { success: true, isCached: true };

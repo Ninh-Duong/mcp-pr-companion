@@ -13,6 +13,7 @@ import { PRDiscoveryService } from '../core/discovery/pr-discovery.service.js';
 import { AccessGate } from '../core/auth/access-gate.js';
 import pLimit from 'p-limit';
 import { Logger } from '../utils/logger.js';
+import { getPRStorageStatus, PRStorageStatus } from '../core/pr-status.js';
 
 export interface Page {
   text: string;
@@ -63,8 +64,8 @@ export class PRContextService {
   }
 
   /**
-   * Re-syncs when there is no local revision, on refresh, or when the PR's source/target commits
-   * moved since the last sync. The note explains a cached answer when freshness could not be checked.
+   * Re-syncs when there is no local revision, on refresh, or when the PR's commits, state, or draft
+   * flag changed since the last sync. The note explains a cached answer when freshness could not be checked.
    */
   static async ensureFresh(pr: ParsedPRUrl, refresh: boolean): Promise<{ status: 'synced' | 'unchanged' | 'offline'; note: string | null }> {
     // Outside the try: missing credentials, ALLOWED_EMAILS denial or no repository access must fail the call.
@@ -76,14 +77,17 @@ export class PRContextService {
       return { status: 'synced', note: null };
     }
 
-    let head: { source: string; destination: string };
+    let head: { source: string; destination: string; state: string; isDraft: boolean };
     try {
       head = await collector.getHeadCommits(pr.workspace, pr.repoSlug, pr.prId);
     } catch (err) {
       const reason = SecretScanner.scanAndRedact(err instanceof Error ? err.message : String(err));
       return { status: 'offline', note: `Note: could not check Bitbucket for newer commits (${reason}); showing the revision synced at ${active.current.updated_at}.` };
     }
-    if (head.source !== active.current.source_commit || head.destination !== active.current.target_commit) {
+    if (head.source !== active.current.source_commit ||
+      head.destination !== active.current.target_commit ||
+      head.state.toUpperCase() !== active.manifest?.state.toUpperCase() ||
+      head.isDraft !== active.manifest?.is_draft) {
       await this.sync(pr, collector);
       return { status: 'synced', note: null };
     }
@@ -211,6 +215,38 @@ export class PRContextService {
     return { total: prs.length, prs };
   }
 
+  static async listSyncedPRs(repository?: string, status?: PRStorageStatus, offset = 0, limit = 50) {
+    const { repositories } = ConfigManager.credentials();
+    const targets = repository ? [repository] : repositories;
+    if (targets.length === 0) throw new Error('No repository: pass repository ("workspace/repo") or set BITBUCKET_REPOSITORY in .env.');
+    if (targets.some(r => !/^[^/\s]+\/[^/\s]+$/.test(r))) throw new Error('repository must look like "workspace/repo".');
+
+    const prs = [];
+    for (const target of targets) {
+      const [workspace, repoSlug] = target.split('/');
+      await AccessGate.unlock(workspace, repoSlug);
+      for (const id of OutputReader.listPRIds(workspace, repoSlug)) {
+        const active = OutputReader.getActiveRevision(workspace, repoSlug, id);
+        if (!active?.manifest) continue;
+        const manifest = active.manifest;
+        const prStatus = getPRStorageStatus(manifest.state, manifest.is_draft);
+        if (status && status !== prStatus) continue;
+        prs.push({
+          pr_url: `https://bitbucket.org/${workspace}/${repoSlug}/pull-requests/${id}`,
+          repository: target,
+          id,
+          title: manifest.title,
+          pr_status: prStatus,
+          updated_at: active.current.updated_at ?? manifest.provenance?.generated_at ?? ''
+        });
+      }
+    }
+    prs.sort((a, b) => b.updated_at.localeCompare(a.updated_at) || a.repository.localeCompare(b.repository) || b.id - a.id);
+    const page = prs.slice(offset, offset + limit);
+    const end = offset + page.length;
+    return { total: prs.length, prs: page, next_offset: end < prs.length ? end : null };
+  }
+
   /**
    * Syncs every open PR of the account (one repository or every BITBUCKET_REPOSITORY entry).
    * Unchanged PRs cost one metadata request; one failing PR never stops the batch.
@@ -255,6 +291,15 @@ export class PRContextService {
     const active = OutputReader.getActiveRevision(pr.workspace, pr.repoSlug, pr.prId);
     if (!active) return { synced: false };
     const { active_revision, updated_at, source_commit, target_commit, ai_reading_mode } = active.current as any;
-    return { synced: true, revision: active_revision, updated_at, source_commit, target_commit, ai_reading_mode, stats: active.manifest?.stats };
+    return {
+      synced: true,
+      revision: active_revision,
+      updated_at,
+      source_commit,
+      target_commit,
+      ai_reading_mode,
+      pr_status: active.manifest ? getPRStorageStatus(active.manifest.state, active.manifest.is_draft) : undefined,
+      stats: active.manifest?.stats
+    };
   }
 }

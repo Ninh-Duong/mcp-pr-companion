@@ -101,7 +101,7 @@ try {
   send({ id: 2, method: 'tools/list' });
   assert.deepEqual((await waitFor(2)).result.tools.map((tool: { name: string }) => tool.name).sort(), [
     'check_bitbucket_connection', 'get_pr_comments', 'get_pr_context_pack', 'get_pr_file_changes',
-    'get_pr_file_context', 'get_pr_sync_status', 'list_my_open_prs', 'search_pr_files', 'sync_my_open_prs'
+    'get_pr_file_context', 'get_pr_sync_status', 'list_my_open_prs', 'list_synced_prs', 'search_pr_files', 'sync_my_open_prs'
   ]);
 } finally {
   child.stdin.end();

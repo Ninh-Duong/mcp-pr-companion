@@ -43,7 +43,7 @@ async function runOwnershipAndFilterTests() {
   // 4. PRFilterBuilder Query Security Test
   console.log('\n4. PRFilterBuilder Strict UUID Querying:');
   const query = PRFilterBuilder.buildQuery(userUuid);
-  assert(query === 'state="OPEN" AND author.uuid="{user-uuid-1234}"', 'PRFilterBuilder generates author.uuid query');
+  assert(query === 'author.uuid="{user-uuid-1234}"', 'PRFilterBuilder scopes queries to the authenticated author');
   
   let emptyUuidError = false;
   try {
@@ -60,7 +60,8 @@ async function runOwnershipAndFilterTests() {
     { id: 1, title: 'Ready PR 1', state: 'OPEN', isDraft: false, sourceBranch: 'b1', targetBranch: 'main', updatedOn: '2026-08-01', authorUuid: 'user-uuid-1234', cacheStatus: 'Missing' },
     { id: 2, title: 'Draft PR 2', state: 'OPEN', isDraft: true, sourceBranch: 'b2', targetBranch: 'main', updatedOn: '2026-08-02', authorUuid: 'user-uuid-1234', cacheStatus: 'Missing' },
     { id: 3, title: 'Foreign PR 3', state: 'OPEN', isDraft: false, sourceBranch: 'b3', targetBranch: 'main', updatedOn: '2026-08-03', authorUuid: 'other-uuid-9999', cacheStatus: 'Missing' },
-    { id: 4, title: 'Merged PR 4', state: 'MERGED', isDraft: false, sourceBranch: 'b4', targetBranch: 'main', updatedOn: '2026-08-04', authorUuid: 'user-uuid-1234', cacheStatus: 'Missing' }
+    { id: 4, title: 'Merged PR 4', state: 'MERGED', isDraft: false, sourceBranch: 'b4', targetBranch: 'main', updatedOn: '2026-08-04', authorUuid: 'user-uuid-1234', cacheStatus: 'Missing' },
+    { id: 5, title: 'Declined PR 5', state: 'DECLINED', isDraft: false, sourceBranch: 'b5', targetBranch: 'main', updatedOn: '2026-08-05', authorUuid: 'user-uuid-1234', cacheStatus: 'Missing' }
   ];
 
   const readyPRs = PRViewFilter.apply(mockPRs, 'user-uuid-1234', 'ready');
@@ -73,6 +74,14 @@ async function runOwnershipAndFilterTests() {
   assert(allPRs.length === 2 && allPRs.some(p => p.id === 1) && allPRs.some(p => p.id === 2), 'All filter returns both Ready and Draft owned OPEN PRs');
   assert(!allPRs.some(p => p.id === 3 || p.id === 4), 'All filter excludes foreign author and non-OPEN PRs');
   console.log('  ✓ PRViewFilter filters Ready, Draft, and All PRs with mandatory ownership isolation');
+
+  const openSyncPRs = PRViewFilter.applyForSync(mockPRs, 'user-uuid-1234', 'open');
+  assert.deepEqual(openSyncPRs.map(p => p.id), [1], 'Open sync excludes drafts and closed PRs');
+  assert.deepEqual(PRViewFilter.applyForSync(mockPRs, 'user-uuid-1234', 'draft').map(p => p.id), [2]);
+  assert.deepEqual(PRViewFilter.applyForSync(mockPRs, 'user-uuid-1234', 'merged').map(p => p.id), [4]);
+  assert.deepEqual(PRViewFilter.applyForSync(mockPRs, 'user-uuid-1234', 'declined').map(p => p.id), [5]);
+  assert.deepEqual(PRViewFilter.applyForSync(mockPRs, 'user-uuid-1234', 'all').map(p => p.id), [1, 2, 4, 5]);
+  console.log('  ✓ sync modes partition owned open, draft, merged and declined PRs');
 
   // 6. Scoped DiscoveryCache Tests
   console.log('\n6. Scoped DiscoveryCache Isolation:');

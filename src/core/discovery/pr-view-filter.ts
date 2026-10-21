@@ -1,5 +1,6 @@
 import { DiscoveredPR } from './pr-list.normalizer.js';
 import { PROwnershipPolicy } from '../auth/pr-ownership.policy.js';
+import { PRSyncMode } from '../pr-status.js';
 
 export type PRReadinessFilter = 'ready' | 'draft' | 'all';
 
@@ -9,6 +10,19 @@ export interface PRDiscoveryFilterOptions {
 }
 
 export class PRViewFilter {
+  static matchesForSync(pr: DiscoveredPR, currentUserUuid: string, mode: PRSyncMode): boolean {
+    if (!PROwnershipPolicy.belongsToUser(pr.authorUuid, currentUserUuid)) return false;
+    const state = pr.state.toUpperCase();
+    if (mode === 'all') return state === 'OPEN' || state === 'MERGED' || state === 'DECLINED';
+    if (mode === 'open') return state === 'OPEN' && !pr.isDraft;
+    if (mode === 'draft') return state === 'OPEN' && pr.isDraft;
+    return state === mode.toUpperCase();
+  }
+
+  static applyForSync(prs: DiscoveredPR[], currentUserUuid: string, mode: PRSyncMode): DiscoveredPR[] {
+    return prs.filter(pr => this.matchesForSync(pr, currentUserUuid, mode));
+  }
+
   static matches(
     pr: DiscoveredPR,
     currentUserUuid: string,

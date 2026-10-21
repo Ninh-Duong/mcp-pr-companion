@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # Linux/macOS launcher: ensures Node.js >= 20.12 (installs it via brew / NodeSource if missing),
 # then hands over to bin/cli.js (dependencies, build, .env checks).
-# Usage: ./run.sh [server|cmd|generate-all|purge-plaintext|check|prepare]
+# Usage: ./run.sh [server|cmd|generate-all|sync <mode>|purge-plaintext|check|prepare]
 # All launcher output goes to stderr: stdout is reserved for the MCP JSON-RPC stream.
 set -e
 cd "$(dirname "$0")"

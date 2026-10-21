@@ -39,11 +39,11 @@ export class DiscoveryCache {
     sourceCommitHash?: string,
     destinationCommitHash?: string
   ): 'Missing' | 'Cached' | 'Outdated' {
-    const prDir = OutputReader.getPROutputDir(workspace, repoSlug, prId);
-    if (!fs.existsSync(path.join(prDir, 'current.json'))) return 'Missing';
+    const directories = OutputReader.getPRDirectories(workspace, repoSlug, prId);
+    if (!directories.some(prDir => fs.existsSync(path.join(prDir, 'current.json')))) return 'Missing';
     if (!sourceCommitHash || !destinationCommitHash) return 'Outdated';
     const revision = `rev_${sourceCommitHash.substring(0, 7)}_${destinationCommitHash.substring(0, 7)}`;
-    return fs.existsSync(path.join(prDir, 'revisions', revision)) ? 'Cached' : 'Outdated';
+    return directories.some(prDir => fs.existsSync(path.join(prDir, 'revisions', revision))) ? 'Cached' : 'Outdated';
   }
 
   static clearScope(userUuid: string, workspace: string, repoSlug: string): void {

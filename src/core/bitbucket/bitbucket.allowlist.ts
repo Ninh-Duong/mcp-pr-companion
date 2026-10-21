@@ -1,3 +1,5 @@
+import { isPRDraft } from '../pr-status.js';
+
 export interface ProjectedMetadata {
   id: number;
   title: string;
@@ -57,7 +59,7 @@ export class BitbucketAllowlistProjector {
       title: (raw.title || '').trim(),
       description: this.truncateDescription(raw.description),
       state: raw.state || 'open',
-      draft: Boolean(raw.draft),
+      draft: isPRDraft(raw),
       source: {
         branch: { name: raw.source?.branch?.name || '' },
         commit: { hash: raw.source?.commit?.hash || '' }

@@ -40,7 +40,7 @@ The MCP server and the CLI share one pipeline and one on-disk store. Neither kee
 ## 3. On-disk layout (frozen: AGENTS.md invariant 7)
 
 ```text
-ai-context/[<AI_CONTEXT_COMPANY>/]<workspace>/<repo>/pr_<id>/
+ai-context/[<AI_CONTEXT_COMPANY>/]<workspace>/<repo>/<open|draft|merged|declined>/pr_<id>/
 ├── current.json            ← active revision pointer (written last)
 ├── context.md              ← what get_pr_context_pack returns
 ├── files.md                ← table of every changed file (include_file_table)
@@ -57,7 +57,7 @@ ai-context/[<AI_CONTEXT_COMPANY>/]<workspace>/<repo>/pr_<id>/
 
 Other local state, all git-ignored: `Logs/mcp-server.log` (MCP and launcher log), `Logs/<date>/*.jsonl` (CLI run logs), `.mcp-pr-companion/prs/salt.key` (salt for the opaque repo ids in CLI logs).
 
-`OutputReader.getPROutputDir` also finds older folders written without a company segment or under the default root.
+The status directory records the state at the last successful sync. Draft is a separate group from open, even though Bitbucket represents both as state `OPEN`; `open` means an open, non-draft PR. There is no `all` directory. `OutputReader` also finds the old status-less layout and legacy roots during migration.
 
 ## 4. Write path and atomicity
 
@@ -70,9 +70,10 @@ Every file below is written with `writeSecure` and read with `readSecure` (`src/
 4. Rebuild `files/` aside, then swap it in, so ids from an older, larger revision never linger.
 5. Write `context.md`, `files.md`, `actions.md` and the top-level `manifest.json` (each encrypted, temp file, fsync, rename).
 6. Write **`current.json` last**. It is the commit point.
-7. Prune: keep the active revision and the 4 newest others (`RevisionWriter.KEEP_REVISIONS = 5`).
+7. After this new revision is valid, move the old encrypted PR directory into the status layout, preserving its revision history; if the move fails, leave the old copy for the next successful sync.
+8. Prune: keep the active revision and the 4 newest others (`RevisionWriter.KEEP_REVISIONS = 5`).
 
-A crash before step 6 leaves the previous `current.json` in place. Steps 4–5 may already show the new pack while `current.json` still names the old revision. The next sync repairs that.
+A crash before publishing `current.json` leaves the previous active revision in place. A crash during status migration leaves the old directory readable. The next successful sync repairs the directory placement.
 
 ## 5. Freshness and concurrency (MCP)
 
@@ -86,7 +87,7 @@ sequenceDiagram
         S->>BB: full collect
     else local revision exists
         S->>BB: GET pullrequest (metadata only)
-        alt source/target commit changed
+        alt source/target commit, state or draft flag changed
             S->>BB: full collect
         else unreachable
             S-->>Agent: "Note: could not check…" + cached pack
@@ -96,7 +97,7 @@ sequenceDiagram
 ```
 
 - `PRContextService.sync` keeps one in-flight promise per PR, so parallel calls (refresh or not) share a fetch.
-- File tools never download PR data. Like every tool, they first pass the repository access check (`AccessGate.unlock`: one Bitbucket request per repository, cached 60 s), then read the revision that `get_pr_context_pack` or `sync_my_open_prs` last made current.
+- File tools never download PR data. Like every tool that reads local data, they first pass the repository access check (`AccessGate.unlock`: one Bitbucket request per repository, cached 60 s), then read the revision at the active status path. `list_synced_prs` lists those revisions by status.
 - `get_pr_comments` and `list_my_open_prs` always fetch live and store nothing: comments change without new commits, so a commit-hash freshness check cannot cover them.
 - Re-review: when a sync replaces a *different* revision, `DataStore.saveRevision` compares the files against the active revision (by sanitized path and patch content) and stores `changes_since_previous` in the manifest. `context.md` renders it as "Changed since last sync".
 - Transient errors (429/502/503/504) are retried up to twice inside `fetchWithRetry`.
@@ -108,4 +109,5 @@ sequenceDiagram
 - Under mcp-hub the child's stderr is discarded. The launcher and `Logger` therefore also append to `Logs/mcp-server.log`.
 - The first start on a fresh clone runs `npm ci` and `tsc`, which can take a minute. Run `node bin/cli.js prepare` once before connecting a client.
 - With `AUTO_SYNC_ON_START=true`, the server starts `PRContextService.autoSync()` in the background right after the stdio connection is up. It runs the same code as `sync_my_open_prs` over every `BITBUCKET_REPOSITORY` entry, never blocks tool calls (overlapping PR syncs share one fetch), and logs `auto_sync done total=… synced=… unchanged=… failed=…`. mcp-hub starts children per client session, so this runs once per session.
+- The CLI `sync <mode>` scans all pages for the requested states, filters to PRs authored by the configured account, and writes them into status-specific directories. A pagination interruption is reported as incomplete and produces a failing exit code.
 - Batch sync (`sync_my_open_prs`, auto-sync) runs 3 PRs at a time (`p-limit`). An unchanged PR costs one metadata request, and one failing PR is reported in its row without stopping the batch.

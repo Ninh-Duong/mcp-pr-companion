@@ -1,4 +1,5 @@
 import path from 'path';
+import { PRStorageStatus, PR_STORAGE_STATUSES } from '../pr-status.js';
 
 export class StorePathResolver {
   public static readonly DEFAULT_ROOT = 'ai-context';
@@ -15,13 +16,28 @@ export class StorePathResolver {
     repoSlug: string,
     prId: number,
     company?: string,
-    root?: string
+    root?: string,
+    status?: PRStorageStatus
   ): string {
+    const repositoryDir = this.getBitbucketRepositoryDir(workspace, repoSlug, company, root);
+    return status
+      ? path.join(repositoryDir, status, `pr_${prId}`)
+      : path.join(repositoryDir, `pr_${prId}`);
+  }
+
+  public static getBitbucketRepositoryDir(workspace: string, repoSlug: string, company?: string, root?: string): string {
     const baseRoot = this.resolveRoot(root);
     const companySegment = company?.trim();
     if (companySegment) {
-      return path.join(baseRoot, companySegment, workspace, repoSlug, `pr_${prId}`);
+      return path.join(baseRoot, companySegment, workspace, repoSlug);
     }
-    return path.join(baseRoot, workspace, repoSlug, `pr_${prId}`);
+    return path.join(baseRoot, workspace, repoSlug);
+  }
+
+  public static getBitbucketPRDirs(workspace: string, repoSlug: string, prId: number, company?: string, root?: string): string[] {
+    return [
+      ...PR_STORAGE_STATUSES.map(status => this.getBitbucketPRDir(workspace, repoSlug, prId, company, root, status)),
+      this.getBitbucketPRDir(workspace, repoSlug, prId, company, root)
+    ];
   }
 }

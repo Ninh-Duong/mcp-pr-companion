@@ -4,6 +4,7 @@ import { FileChangeV4 } from './schema/file_change.v4.schema.js';
 import { PRCoverageV4 } from './schema/coverage.v4.schema.js';
 import { AIReadingMetadata } from '../analyzer/context-mode.classifier.js';
 import path from 'path';
+import { getPRStorageStatus } from '../pr-status.js';
 
 export class MarkdownFormatter {
   static formatContextPack(
@@ -39,6 +40,7 @@ export class MarkdownFormatter {
     lines.push(`- **Repository**: ${repository}`);
     lines.push(`- **Branches**: \`${manifest.source_branch}\` -> \`${manifest.target_branch}\``);
     lines.push(`- **State**: ${manifest.state}`);
+    lines.push(`- **PR Status**: ${getPRStorageStatus(manifest.state, manifest.is_draft)}`);
     lines.push(`- **Ticket**: ${manifest.ticket_id || 'N/A'}`);
     lines.push(`- **Overall Risk**: ${manifest.risk_summary.overall_level}`);
     lines.push('');

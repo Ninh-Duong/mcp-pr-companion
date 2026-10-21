@@ -17,8 +17,14 @@ export class PaginationHelper {
     let nextUrl: string | undefined = initialUrl;
     let pageCount = 0;
     const maxPages = options.maxPages || 50; // Safety guard limit
+    const visited = new Set<string>();
 
     while (nextUrl && pageCount < maxPages) {
+      if (visited.has(nextUrl)) {
+        warnings.push('Pagination stopped: Bitbucket repeated a page URL.');
+        return { values, isComplete: false, warnings };
+      }
+      visited.add(nextUrl);
       if (options.signal?.aborted) {
         warnings.push('Fetch aborted during pagination.');
         return { values, isComplete: false, warnings };
