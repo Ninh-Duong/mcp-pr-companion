@@ -1,4 +1,5 @@
 import fs from 'fs';
+import path from 'path';
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from 'crypto';
 import { AtomicWriter } from './atomic.writer.js';
 import { AccessGate } from '../auth/access-gate.js';
@@ -49,6 +50,10 @@ export function isEncrypted(buffer: Buffer): boolean {
   return buffer.subarray(0, MAGIC.length).equals(MAGIC);
 }
 
+export function isEncryptedFile(file: string): boolean {
+  return isEncrypted(fs.readFileSync(file));
+}
+
 function split(buffer: Buffer): { headLine: Buffer; header: SecureHeader; body: Buffer } {
   if (!isEncrypted(buffer)) throw new PlaintextFileError();
   const end = buffer.indexOf(0x0a, MAGIC.length);
@@ -97,6 +102,82 @@ export function writeSecure(file: string, text: string, scope: SecureScope): voi
 
 export function readSecure(file: string): string {
   return decryptBuffer(fs.readFileSync(file));
+}
+
+/** Copies an encrypted tree through the secure reader/writer and verifies every copied file. */
+export function copySecureTree(source: string, destination: string, scope: SecureScope): void {
+  const copy = (from: string, to: string): void => {
+    const sourceMtime = fs.statSync(from).mtime;
+    fs.mkdirSync(to, { recursive: true });
+    for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
+      const fromPath = path.join(from, entry.name);
+      const toPath = path.join(to, entry.name);
+      if (entry.isDirectory()) {
+        copy(fromPath, toPath);
+      } else if (entry.isFile()) {
+        const content = readSecure(fromPath);
+        writeSecure(toPath, content, scope);
+        if (readSecure(toPath) !== content) throw new Error('Secure migration copy verification failed.');
+      } else {
+        throw new Error('Unsupported entry in encrypted migration source.');
+      }
+    }
+    fs.utimesSync(to, sourceMtime, sourceMtime);
+  };
+
+  copy(source, destination);
+}
+
+/** Compares encrypted trees by decrypted content; an optional relative path may be ignored. */
+export function secureTreesEqual(source: string, destination: string, ignoredFiles: readonly string[] = []): boolean {
+  const compare = (from: string, to: string, relative: string): boolean => {
+    let sourceEntries: fs.Dirent[];
+    let destinationEntries: fs.Dirent[];
+    try {
+      sourceEntries = fs.readdirSync(from, { withFileTypes: true });
+      destinationEntries = fs.readdirSync(to, { withFileTypes: true });
+    } catch {
+      return false;
+    }
+    if (sourceEntries.length !== destinationEntries.length) return false;
+
+    const destinationByName = new Map(destinationEntries.map(entry => [entry.name, entry]));
+    return sourceEntries.every(entry => {
+      const other = destinationByName.get(entry.name);
+      if (!other) return false;
+      const childRelative = relative ? `${relative}/${entry.name}` : entry.name;
+      const fromPath = path.join(from, entry.name);
+      const toPath = path.join(to, entry.name);
+      if (entry.isDirectory() && other.isDirectory()) return compare(fromPath, toPath, childRelative);
+      if (!entry.isFile() || !other.isFile()) return false;
+      if (ignoredFiles.includes(childRelative)) {
+        try {
+          readSecure(fromPath);
+          readSecure(toPath);
+          return true;
+        } catch {
+          return false;
+        }
+      }
+      try {
+        return readSecure(fromPath) === readSecure(toPath);
+      } catch {
+        return false;
+      }
+    });
+  };
+
+  return compare(source, destination, '');
+}
+
+/** Confirms that every regular file in a stored tree can be decrypted. */
+export function verifySecureTree(root: string): void {
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    const file = path.join(root, entry.name);
+    if (entry.isDirectory()) verifySecureTree(file);
+    else if (entry.isFile()) readSecure(file);
+    else throw new Error('Unsupported entry in encrypted migration source.');
+  }
 }
 
 /** The plaintext header (no key needed). */

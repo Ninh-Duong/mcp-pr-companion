@@ -34,7 +34,7 @@ On first launch, the tool prepares the environment:
 3. Builds the project if needed.
 4. Creates a .env file if one does not exist, then stops so you can fill it in.
 
-The check command only checks dependencies, build output, and configuration. It does not install dependencies, build, or create .env. The run.cmd and run.sh wrappers may still install Node.js before invoking check. To install dependencies and build without starting the app, run .\run.cmd prepare or ./run.sh prepare.
+The check command checks Node.js, installed dependencies, build output, and required configuration. It does not install dependencies, build, create .env, or call Bitbucket. The run.cmd and run.sh wrappers may still install Node.js before invoking check. To install dependencies and build without starting the app, run .\run.cmd prepare or ./run.sh prepare. The MCP tool check_bitbucket_connection separately checks the live Bitbucket credentials and account allowlist.
 
 ### Step 3: Configure .env
 
@@ -104,7 +104,7 @@ ai-context/[<AI_CONTEXT_COMPANY>/]<workspace>/<repo>/<open|draft|merged|declined
 └── revisions/rev_<src7>_<dst7>/
 ~~~
 
-The status directory reflects the last successful sync. Old data is moved after the new encrypted revision is valid. Readers also find legacy directories during migration. The file names and schema v4 layout inside each PR remain unchanged. Files under ai-context are encrypted; AI agents must read them through MCP tools.
+The status directory reflects the last successful sync. The active commits are stored in current.json; the PR state and draft flag are stored in the manifest. Retained revision history is migrated from old paths only after a new encrypted revision is valid. If migration is interrupted, the source directory remains readable and the next successful sync retries, even when the PR itself is unchanged. Readers also find legacy directories during migration. The file names and schema v4 layout inside each PR remain unchanged. Files under ai-context are encrypted; AI agents must read them through MCP tools.
 
 CLI logs are written under Logs/<date>/. MCP server logs are written to Logs/mcp-server.log.
 
@@ -129,7 +129,7 @@ The MCP tools (prefixed with pr__ when exposed through mcp-hub) are:
 
 | Tool | Purpose |
 |---|---|
-| get_pr_context_pack | Get the PR context pack. Start here; it syncs when missing or when commits, state, or draft status changed. Set refresh=true to force a sync. |
+| get_pr_context_pack | Get the PR context pack. Start here; it syncs when missing, when commits/state/draft status changed, or when directory migration is pending. Set refresh=true to force a sync. |
 | search_pr_files | Find files by path, language, status, change kind, or risk tag. |
 | get_pr_file_context | Read one file summary and a paged sanitized diff. |
 | get_pr_file_changes | Get a file's classification, risk, symbols, and an optional diff page as JSON. |
@@ -138,11 +138,11 @@ The MCP tools (prefixed with pr__ when exposed through mcp-hub) are:
 | get_pr_comments | Read sanitized review comments, including inline comments with file_id when available. |
 | list_my_open_prs | List your open PRs and their pr_url for a configured repository or all configured repositories. |
 | sync_my_open_prs | Sync your open PRs for one or all configured repositories. This existing tool retains its open-only behavior. |
-| check_bitbucket_connection | Check that the configured Bitbucket credentials can access Bitbucket. |
+| check_bitbucket_connection | Check live Bitbucket credentials and the account allowlist. |
 
 To discover cached PRs, call list_synced_prs and filter by status. Then use the returned pr_url with get_pr_context_pack or the file tools. Do not read ai-context files directly because they are encrypted.
 
-Run the CLI sync command locally to fetch historical groups, then use list_synced_prs through MCP to browse and read the encrypted cache. The Hub's pr__sync_my_open_prs tool keeps its existing open-only behavior. AUTO_SYNC_ON_START=true syncs open PRs in the background whenever the MCP server starts.
+Run the CLI sync command locally to fetch historical groups, then use list_synced_prs through MCP to browse and read the encrypted cache. list_synced_prs, file readers, and get_pr_sync_status read local cache after a repository access check; they do not fetch PR details. list_my_open_prs and get_pr_comments fetch live data from Bitbucket. get_pr_context_pack checks freshness and can sync. The Hub's pr__sync_my_open_prs tool keeps its existing open-only behavior. AUTO_SYNC_ON_START=true syncs open PRs in the background whenever the MCP server starts.
 
 ### Run under mcp-hub
 
@@ -161,7 +161,7 @@ All configuration is stored in .env. See [.env.example](.env.example) for the fu
 |---|---|---|
 | BITBUCKET_EMAIL | Yes | Atlassian account email |
 | BITBUCKET_API_TOKEN | Yes | Read-only Bitbucket API token |
-| BITBUCKET_REPOSITORY | For cmd, generate-all, sync, and check | Comma-separated repository list. generate-all and sync process all configured repositories. cmd lets you choose repositories. The MCP server can start without it when tools receive an explicit repository or PR URL. |
+| BITBUCKET_REPOSITORY | For cmd, generate-all, sync, and check | Comma-separated repository list. generate-all and sync process all configured repositories; `sync` accepts `open`, `draft`, `merged`, `declined`, or `all`. `cmd` lets you choose repositories. The MCP server can start without it when tools receive an explicit repository or PR URL. `list_synced_prs` also uses it when `repository` is omitted. |
 | BITBUCKET_WORKSPACE | No | Default workspace for repository entries without workspace/repo. |
 | ALLOWED_EMAILS | No | Comma-separated account allowlist; empty allows any account with valid repository access. |
 | AUTO_SYNC_ON_START | No | true syncs the account's open PRs in configured repositories in the background. Default: false. |

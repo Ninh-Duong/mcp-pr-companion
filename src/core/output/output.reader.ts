@@ -102,6 +102,13 @@ export class OutputReader {
     return this.getPRDirectories(workspace, repoSlug, prId).some(dir => fs.existsSync(path.join(dir, 'current.json')));
   }
 
+  static hasPendingStatusMigration(workspace: string, repoSlug: string, prId: number, status: PRStorageStatus): boolean {
+    const activeDir = path.resolve(this.getPROutputDir(workspace, repoSlug, prId, undefined, undefined, status));
+    return this.getPRDirectories(workspace, repoSlug, prId).some(dir =>
+      path.resolve(dir) !== activeDir && fs.existsSync(dir)
+    );
+  }
+
   static listPRIds(workspace: string, repoSlug: string): number[] {
     const ids = new Set<number>();
     for (const repositoryDir of this.getRepositoryDirectories(workspace, repoSlug)) {

@@ -9,7 +9,15 @@ import { TextNormalizer } from '../../utils/text.normalizer.js';
 import { StorePathResolver } from './store-path.resolver.js';
 import { MarkdownFormatter } from './markdown.formatter.js';
 import { ContextModeClassifier } from '../analyzer/context-mode.classifier.js';
-import { writeSecure, isEncrypted } from '../storage/secure-file.js';
+import {
+  copySecureTree,
+  isEncryptedFile,
+  PlaintextFileError,
+  readSecure,
+  secureTreesEqual,
+  verifySecureTree,
+  writeSecure
+} from '../storage/secure-file.js';
 import { PRStorageStatus } from '../pr-status.js';
 
 export class RevisionWriter {
@@ -142,7 +150,9 @@ export class RevisionWriter {
       writeSecure(path.join(prDir, 'current.json'), JSON.stringify(currentData, null, 2), scope);
 
       for (const previousPrDir of previousPrDirs ?? []) {
-        if (path.resolve(previousPrDir) !== path.resolve(prDir)) this.migratePreviousDirectory(previousPrDir, prDir);
+        if (path.resolve(previousPrDir) !== path.resolve(prDir)) {
+          this.migratePreviousDirectory(previousPrDir, prDir, revisionId, scope);
+        }
       }
       this.pruneRevisions(revisionsDir, revisionId);
 
@@ -164,20 +174,74 @@ export class RevisionWriter {
   // ponytail: fixed keep-count by mtime; make it configurable if anyone needs older revisions.
   static readonly KEEP_REVISIONS = 5;
 
-  private static migratePreviousDirectory(previousPrDir: string, prDir: string): void {
+  private static migratePreviousDirectory(
+    previousPrDir: string,
+    prDir: string,
+    activeRevisionId: string,
+    scope: { workspace: string; repoSlug: string; prId: number }
+  ): void {
     const previousRevisions = path.join(previousPrDir, 'revisions');
     const revisionsDir = path.join(prDir, 'revisions');
-    if (!fs.existsSync(previousRevisions)) return;
     try {
-      for (const entry of fs.readdirSync(previousRevisions, { withFileTypes: true })) {
-        if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
-        const previousRevision = path.join(previousRevisions, entry.name);
-        const targetRevision = path.join(revisionsDir, entry.name);
-        if (!fs.existsSync(targetRevision)) fs.renameSync(previousRevision, targetRevision);
+      if (fs.existsSync(previousRevisions)) {
+        for (const entry of fs.readdirSync(previousRevisions, { withFileTypes: true })) {
+          if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+          const previousRevision = path.join(previousRevisions, entry.name);
+          const targetRevision = path.join(revisionsDir, entry.name);
+          if (this.isPlaintextRevision(previousRevision)) continue;
+          if (entry.name === activeRevisionId) {
+            RevisionValidator.validateOrThrow(targetRevision);
+            RevisionValidator.validateOrThrow(previousRevision);
+          } else if (fs.existsSync(targetRevision)) {
+            if (!secureTreesEqual(previousRevision, targetRevision)) {
+              throw new Error('The retained revision does not match its stored destination.');
+            }
+          } else {
+            this.moveRevision(previousRevision, targetRevision, revisionsDir, scope);
+          }
+        }
       }
       fs.rmSync(previousPrDir, { recursive: true, force: true });
     } catch {
       // The newly published revision is valid; leave any unmigrated encrypted source data in place.
+    }
+  }
+
+  private static isPlaintextRevision(revisionDir: string): boolean {
+    const manifest = path.join(revisionDir, 'manifest.json');
+    if (!fs.existsSync(manifest)) return true;
+    try {
+      readSecure(manifest);
+      return false;
+    } catch (err) {
+      if (err instanceof PlaintextFileError) return true;
+      throw err;
+    }
+  }
+
+  private static moveRevision(
+    source: string,
+    target: string,
+    revisionsDir: string,
+    scope: { workspace: string; repoSlug: string; prId: number }
+  ): void {
+    verifySecureTree(source);
+    try {
+      fs.renameSync(source, target);
+      return;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EXDEV') throw err;
+    }
+
+    const stagingRoot = fs.mkdtempSync(path.join(revisionsDir, `.tmp-migrate-${path.basename(source)}-`));
+    const stagedRevision = path.join(stagingRoot, path.basename(source));
+    try {
+      copySecureTree(source, stagedRevision, scope);
+      if (!secureTreesEqual(source, stagedRevision)) throw new Error('Copied revision does not match its source.');
+      fs.renameSync(stagedRevision, target);
+      if (!secureTreesEqual(source, target)) throw new Error('Published revision does not match its source.');
+    } finally {
+      fs.rmSync(stagingRoot, { recursive: true, force: true });
     }
   }
 
@@ -188,7 +252,7 @@ export class RevisionWriter {
       .map(e => path.join(revisionsDir, e.name));
     const isPlaintext = (dir: string) => {
       const manifest = path.join(dir, 'manifest.json');
-      return !fs.existsSync(manifest) || !isEncrypted(fs.readFileSync(manifest));
+      return !fs.existsSync(manifest) || !isEncryptedFile(manifest);
     };
     const stale = others.filter(isPlaintext);
     const old = others

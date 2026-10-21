@@ -87,7 +87,8 @@ export class PRContextService {
     if (head.source !== active.current.source_commit ||
       head.destination !== active.current.target_commit ||
       head.state.toUpperCase() !== active.manifest?.state.toUpperCase() ||
-      head.isDraft !== active.manifest?.is_draft) {
+      head.isDraft !== active.manifest?.is_draft ||
+      OutputReader.hasPendingStatusMigration(pr.workspace, pr.repoSlug, pr.prId, getPRStorageStatus(head.state, head.isDraft))) {
       await this.sync(pr, collector);
       return { status: 'synced', note: null };
     }

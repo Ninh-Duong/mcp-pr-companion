@@ -25,7 +25,7 @@
 | Size | Anything that can grow is paged: `offset` + `max_chars` (500–100000, default 16000) through `PRContextService.page()`. Lists take a `limit` with a max. |
 | Errors | Throw `Error` with an actionable message ("call X first", "use Y to list ids"). `run()` turns it into `{ isError: true, text: "Error: …" }` after `SecretScanner`. Log only the tool name and error type. |
 | Annotations | `readOnlyHint: false` if the tool writes anything, the local cache included. `openWorldHint: true` if it calls Bitbucket. |
-| Side effects | `get_pr_context_pack`, `sync_my_open_prs` (also run at startup by `AUTO_SYNC_ON_START`), and the CLI `sync <mode>` may sync. File tools and `list_synced_prs` are local reads after the repository access check. `check_bitbucket_connection` is the read-only upstream health check required by mcp-hub; keep its success payload `{"connected": true}` (the hub smoke check validates it). |
+| Side effects | `get_pr_context_pack`, `sync_my_open_prs` (also run at startup by `AUTO_SYNC_ON_START`), and the CLI `sync <mode>` may sync and write the encrypted local cache. File tools, `get_pr_sync_status`, and `list_synced_prs` read local cache after the repository access check; they do not fetch PR details or migrate directories. `list_my_open_prs` and `get_pr_comments` fetch live Bitbucket data without writing the cache. `check_bitbucket_connection` is the read-only credential/allowlist health check required by mcp-hub; it does not verify access to a particular repository. Keep its success payload `{"connected": true}` (the hub smoke check validates it). |
 | Instructions | `INSTRUCTIONS` < 1,500 characters, covering workflow and paging. Update it with every tool change. |
 
 ## 4. Privacy contract

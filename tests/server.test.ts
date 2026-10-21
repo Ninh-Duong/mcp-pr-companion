@@ -18,7 +18,8 @@ const { ConfigManager } = await import('../src/config/config.manager.ts');
 const { PRContextService } = await import('../src/mcp/context.service.ts');
 const { AccessGate } = await import('../src/core/auth/access-gate.ts');
 const { DataStore } = await import('../src/core/storage/data.store.ts');
-const { readSecure } = await import('../src/core/storage/secure-file.ts');
+const { readSecure, writeSecure } = await import('../src/core/storage/secure-file.ts');
+const { SyncPRsService } = await import('../src/core/orchestration/sync-prs.service.ts');
 const REPO_UUID = '{7d3c0a52-1111-4222-8333-944455556666}';
 
 const PR_URL = 'https://bitbucket.org/acme/demo-repo/pull-requests/7';
@@ -262,6 +263,119 @@ assert.equal(JSON.parse((await call('get_pr_sync_status', { pr_url: PR_URL })).t
 const mergedListing = JSON.parse((await call('list_synced_prs', { repository: 'acme/demo-repo', status: 'merged' })).text);
 assert.deepEqual(mergedListing.prs.map((pr: any) => pr.pr_status), ['merged']);
 console.log('  ✓ state or draft changes re-sync into the matching status directory');
+
+// A successful sync must retry incomplete directory migration even when the PR did not change.
+const legacyDir = path.resolve('ai-context', 'acme', 'acme', 'demo-repo', 'pr_7');
+const migrationScope = { workspace: 'acme', repoSlug: 'demo-repo', prId: 7 };
+const originalRenameSync = fs.renameSync;
+const session = {
+  email: 'dev@example.com', token: 'test-token', currentUserUuid: '{u}',
+  repository: { workspace: 'acme', repoSlug: 'demo-repo', opaqueId: 'repo_test' },
+  capabilities: { tokenAuthenticated: true, userAccess: true, repoRead: true, prRead: true, diffRead: true }
+};
+const beforeCanonicalSyncDiffs = calls.diff;
+const canonicalSync = await SyncPRsService.execute(session, 'merged');
+assert.deepEqual([canonicalSync.totalFiltered, canonicalSync.completed, canonicalSync.cached, canonicalSync.failed], [1, 0, 1, 0]);
+assert.equal(calls.diff, beforeCanonicalSyncDiffs, 'correctly placed PRs remain cached');
+const failMigrationOnce = (historyDir: string) => {
+  let shouldFail = true;
+  fs.renameSync = ((source: fs.PathLike, destination: fs.PathLike) => {
+    if (shouldFail && path.resolve(String(source)) === path.resolve(historyDir)) {
+      shouldFail = false;
+      throw new Error('Simulated migration interruption');
+    }
+    return originalRenameSync(source, destination);
+  }) as typeof fs.renameSync;
+};
+const simulateCrossVolumeOnce = (historyDir: string) => {
+  let shouldFail = true;
+  fs.renameSync = ((source: fs.PathLike, destination: fs.PathLike) => {
+    if (shouldFail && path.resolve(String(source)) === path.resolve(historyDir)) {
+      shouldFail = false;
+      const error = new Error('Simulated cross-volume migration') as NodeJS.ErrnoException;
+      error.code = 'EXDEV';
+      throw error;
+    }
+    return originalRenameSync(source, destination);
+  }) as typeof fs.renameSync;
+};
+const addLegacyHistory = (historyId: string) => {
+  const historyDir = path.join(legacyDir, 'revisions', historyId);
+  fs.cpSync(mergedDir, legacyDir, { recursive: true });
+  fs.mkdirSync(historyDir, { recursive: true });
+  writeSecure(path.join(historyDir, 'manifest.json'), JSON.stringify({
+    schema_version: '4.0', state: 'OPEN', is_draft: false, title: 'Retained history'
+  }), migrationScope);
+  return historyDir;
+};
+const assertHistoryPreserved = (historyId: string) => {
+  const migratedManifest = path.join(mergedDir, 'revisions', historyId, 'manifest.json');
+  assert.equal(JSON.parse(readSecure(migratedManifest)).title, 'Retained history');
+  assert.equal(fs.readFileSync(migratedManifest).subarray(0, 5).toString(), 'PRC1\n');
+};
+
+addLegacyHistory('rev_1111111_2222222');
+AccessGate.lockAll();
+repoStatus = 403;
+const deniedMigration = await call('get_pr_context_pack', { pr_url: PR_URL });
+assert.ok(deniedMigration.isError && deniedMigration.text.startsWith('Error: No access:'));
+assert.ok(fs.existsSync(legacyDir), 'access denial leaves the legacy directory untouched');
+repoStatus = 200;
+AccessGate.lockAll();
+
+const beforeMcpMigrationDiffs = calls.diff;
+failMigrationOnce(path.join(legacyDir, 'revisions', 'rev_1111111_2222222'));
+try {
+  const interruptedMigration = await call('get_pr_context_pack', { pr_url: PR_URL });
+  assert.ok(!interruptedMigration.isError, interruptedMigration.text);
+} finally {
+  fs.renameSync = originalRenameSync;
+}
+assert.equal(calls.diff, beforeMcpMigrationDiffs + 1, 'MCP retries the migration by writing a new revision');
+assert.ok(fs.existsSync(legacyDir), 'failed migration leaves source revisions readable');
+await call('get_pr_context_pack', { pr_url: PR_URL });
+assert.equal(fs.existsSync(legacyDir), false, 'the next MCP sync removes the old directory after migration');
+assertHistoryPreserved('rev_1111111_2222222');
+
+addLegacyHistory('rev_3333333_4444444');
+const beforeCliMigrationDiffs = calls.diff;
+failMigrationOnce(path.join(legacyDir, 'revisions', 'rev_3333333_4444444'));
+try {
+  const interruptedCliMigration = await SyncPRsService.execute(session, 'merged');
+  assert.deepEqual([interruptedCliMigration.totalFiltered, interruptedCliMigration.completed, interruptedCliMigration.cached, interruptedCliMigration.failed], [1, 1, 0, 0]);
+} finally {
+  fs.renameSync = originalRenameSync;
+}
+assert.equal(calls.diff, beforeCliMigrationDiffs + 1, 'CLI sync retries the migration by writing a new revision');
+assert.ok(fs.existsSync(legacyDir), 'failed CLI migration leaves source revisions readable');
+const cliRetry = await SyncPRsService.execute(session, 'merged');
+assert.deepEqual([cliRetry.totalFiltered, cliRetry.completed, cliRetry.cached, cliRetry.failed], [1, 1, 0, 0]);
+assert.equal(calls.diff, beforeCliMigrationDiffs + 2, 'the next CLI sync retries migration although the PR is unchanged');
+assert.equal(fs.existsSync(legacyDir), false, 'CLI removes the old directory after history is migrated');
+assertHistoryPreserved('rev_3333333_4444444');
+
+addLegacyHistory('rev_5555555_6666666');
+simulateCrossVolumeOnce(path.join(legacyDir, 'revisions', 'rev_5555555_6666666'));
+try {
+  const crossVolumePack = await call('get_pr_context_pack', { pr_url: PR_URL });
+  assert.ok(!crossVolumePack.isError, crossVolumePack.text);
+} finally {
+  fs.renameSync = originalRenameSync;
+}
+assert.equal(fs.existsSync(legacyDir), false, 'cross-volume migration removes the source only after copying');
+assertHistoryPreserved('rev_5555555_6666666');
+
+addLegacyHistory('rev_7777777_8888888');
+const conflictingTargetRevision = path.join(mergedDir, 'revisions', 'rev_7777777_8888888');
+fs.mkdirSync(conflictingTargetRevision, { recursive: true });
+writeSecure(path.join(conflictingTargetRevision, 'manifest.json'), JSON.stringify({
+  schema_version: '4.0', state: 'MERGED', is_draft: false, title: 'Different target history'
+}), migrationScope);
+const conflictingMigration = await call('get_pr_context_pack', { pr_url: PR_URL });
+assert.ok(!conflictingMigration.isError, conflictingMigration.text);
+assert.ok(fs.existsSync(legacyDir), 'a conflicting target revision never causes the source to be deleted');
+assert.equal(JSON.parse(readSecure(path.join(legacyDir, 'revisions', 'rev_7777777_8888888', 'manifest.json'))).title, 'Retained history');
+console.log('  ✓ MCP and CLI sync retry interrupted migration, preserve encrypted history, and copy across volumes');
 
 // 11. Health check: success payload, and a clear error on bad credentials (no PII in either)
 const health = await call('check_bitbucket_connection', {});

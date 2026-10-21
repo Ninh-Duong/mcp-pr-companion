@@ -6,7 +6,7 @@
 
 - The repo sits next to the hub: `<parent>/mcp-hub` and `<parent>/mcp-pr-companion`.
 - `.env` in this repo has at least `BITBUCKET_EMAIL` and `BITBUCKET_API_TOKEN`. The hub passes no secrets; the child reads its own `.env`, just as `mcp-server-logs` does.
-- `BITBUCKET_REPOSITORY` (with `BITBUCKET_WORKSPACE` for entries without a `workspace/` part) is optional for the server, since every tool takes a `pr_url` or `repository` argument. Set it for `list_my_open_prs` / `sync_my_open_prs` without `repository`, for `AUTO_SYNC_ON_START`, and for `node bin/cli.js check`, which requires it.
+- `BITBUCKET_REPOSITORY` (with `BITBUCKET_WORKSPACE` for entries without a `workspace/` part) is optional for the MCP server when calls provide `pr_url` or `repository`. Set it for `list_my_open_prs`, `list_synced_prs`, or `sync_my_open_prs` when `repository` is omitted, for `AUTO_SYNC_ON_START`, and for `node bin/cli.js check`, which requires it.
 - `BITBUCKET_REPOSITORY` is also required by `node bin/cli.js sync <mode>`; the command syncs owned PRs across every configured repository.
 - Run `node bin/cli.js prepare` once (it runs `npm ci` and the build), then `node bin/cli.js check`, which should be all ✓. A cold first start inside the hub would otherwise spend its first call on installing.
 
@@ -55,7 +55,7 @@ Copy the hub template `config/mcps/mcp-pr-companion.example.json`:
 }
 ```
 
-Both entries start `enabled: false`. Set both to `true` once `.env` is filled and `check` passes, then restart the client that runs the hub. Follow the Hub's `AGENTS.md` and `docs/adding-a-child-mcp.md`: `config/private/hub.json` may be read and edited, but must contain no secrets. Use `scripts/private_config.py keys|set` only for `config/private/mcps/mcp-pr-companion.json`, and never open or print that child config after creation.
+Both entries start `enabled: false`. Enable them after the child's local `check` passes and `check_bitbucket_connection` succeeds, then restart the client that runs the hub. The CLI check validates Node.js, dependencies, build output, and required configuration; the MCP tool checks live credentials and the account allowlist. Follow the Hub's `AGENTS.md` and `docs/adding-a-child-mcp.md` for local configuration.
 
 ## 4. What the hub relies on (do not break)
 
@@ -66,7 +66,7 @@ Both entries start `enabled: false`. Set both to `true` once `.env` is filled an
 | Forwards tool schemas and annotations unchanged | zod `inputSchema` and annotations on every tool |
 | Prefixes tools with `pr__` | Child tool names have no prefix |
 | Prefixes each tool description with `[pr via mcp-pr-companion]`, serves its contract `../mcp-hub/docs/mcps/mcp-pr-companion.md` as a prompt, and does **not** forward this server's `INSTRUCTIONS` | Agents under the hub learn the workflow from the hub contract; `INSTRUCTIONS` reaches only direct connections. Keep tool descriptions self-contained and the contract in step with `INSTRUCTIONS`. |
-| Applies a per-call timeout | Fetch-heavy tools are `get_pr_context_pack` and `sync_my_open_prs`; the others make at most one access-check request per repository per minute. `sync_my_open_prs` on a repository with many changed PRs can approach `timeoutSeconds`: call it per repository, or raise the timeout. |
+| Applies a per-call timeout | `get_pr_context_pack` may download a full diff when missing, stale, or awaiting migration; `sync_my_open_prs` can process many PRs; `list_my_open_prs` and `get_pr_comments` may paginate live results. Local cache readers make an access-check request when the 60-second repository unlock expires. Raise the timeout only if observed calls need it. |
 | Launches the child once per client session | `AUTO_SYNC_ON_START=true` (child `.env`, or `env` in the hub child config) syncs in the background at each launch |
 | Needs a read-only upstream health check for `scripts/smoke.py` (`docs/child-mcp-compatibility.md`) | `check_bitbucket_connection` returns `{"connected": true}` only when the token authenticates |
 
@@ -74,7 +74,7 @@ Renaming a tool, changing its parameters or moving the log path requires updatin
 
 ## 5. Sync from the hub
 
-The terminal command `node bin/cli.js sync <open|draft|merged|declined|all>` syncs the selected PR groups for the configured account across `BITBUCKET_REPOSITORY`. The MCP tool `pr__sync_my_open_prs` keeps its existing open-only behavior. Agents can call `pr__list_synced_prs` with a status filter to find locally cached PRs and then read them by `pr_url`.
+The terminal command `node bin/cli.js sync <open|draft|merged|declined|all>` syncs the selected PR groups for the configured account across `BITBUCKET_REPOSITORY`. `open` contains only non-draft open PRs; `draft` contains open draft PRs; the other two match Bitbucket states; `all` combines the four groups. The command follows every page and reports incomplete results if pagination stops. The MCP tool `pr__sync_my_open_prs` and the legacy `generate-all` command keep their open-only behavior. Agents can call `pr__list_synced_prs` with a status filter to find locally cached PRs and then read them by `pr_url`.
 
 ## 6. Troubleshooting
 
