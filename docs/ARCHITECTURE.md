@@ -30,11 +30,11 @@ The MCP server and the CLI share one pipeline and one on-disk store. Neither kee
 | Step | Code | What happens |
 |---|---|---|
 | 1. Collect | `BitbucketCollector.collect` | Metadata first (it fails hard if this fails), then commits, diffstat and raw diff in parallel. Partial failures become `coverage` entries and `warnings`, not exceptions. |
-| 2. Project | `BitbucketAllowlistProjector` | Keeps only the allowlisted fields. The author is dropped when `PRIVACY_REMOVE_AUTHOR`; commit subjects are capped by `PRIVACY_MAX_COMMIT_SUBJECTS`. |
-| 3. Sanitize | `PIISanitizer`, `SecretScanner`, `PathSanitizer` | Emails and account UUIDs in title, description and commits. Secrets in all text and every patch. Paths per `PRIVACY_FILE_PATH_MODE`, including diff header lines. |
-| 4. Analyze | `DiffParser` → `ChangeClassifier` → `RiskAnalyzer` → `SymbolExtractor` | Per file: change kind, risk level/tags/evidence, touched symbols (regex heuristics, not an AST). |
-| 5. Summarize | `DataStore.saveRevision` | Manifest (change and risk summary, ticket id from `TICKET_PREFIXES`), file index, per-file `change.json` and `patch.diff`, coverage. |
-| 6. Read Strategy | `ContextModeClassifier` | Picks `skim` / `standard` / `inspect_priority_files` / `deep_review`, the files to read next and a token budget. |
+| 2. Project | `BitbucketAllowlistProjector` | Keeps only allowlisted fields. The author is dropped when `PRIVACY_REMOVE_AUTHOR`; commit subjects are capped by `PRIVACY_MAX_COMMIT_SUBJECTS`. Deleted diffstat entries map to `removed`; merge conflicts get a high-risk tag. |
+| 3. Sanitize | `PIISanitizer`, `SecretScanner`, `PathSanitizer` | Emails and account UUIDs in titles, descriptions, commits, and branch names. Secrets in text, patches, and symbols. Paths per `PRIVACY_FILE_PATH_MODE`, including diff headers. |
+| 4. Analyze | `DiffParser` → `ChangeClassifier` → `RiskAnalyzer` → `SymbolExtractor` | Per file: change kind, risk level/tags/evidence, and touched symbols (regex heuristics, not an AST). SQL schema changes and public/authentication files receive stronger review priority. |
+| 5. Summarize | `DataStore.saveRevision` | Manifest (change and risk summary, ticket id from `TICKET_PREFIXES`), file index, per-file `change.json` and `patch.diff`, coverage. PR risk is the highest file risk; commit count covers all commits while stored subjects are capped and merge commits omitted. |
+| 6. Read Strategy | `ContextModeClassifier` | Picks `skim` / `standard` / `inspect_priority_files` / `deep_review`; ranks files, prioritizes public API, auth/security, and database schema changes, and returns a token budget. |
 | 7. Persist | `RevisionWriter.writeRevision` | See §4. |
 
 ## 3. On-disk layout (frozen: AGENTS.md invariant 7)
@@ -59,7 +59,7 @@ Other local state, all git-ignored: `Logs/mcp-server.log` (MCP and launcher log)
 
 The status directory records the state at the last successful sync. Draft is a separate group from open, even though Bitbucket represents both as state `OPEN`; `open` means an open, non-draft PR. There is no `all` directory. `OutputReader` also finds the old status-less layout and legacy roots during migration.
 
-Freshness compares source and target commit hashes from `current.json` and the state and draft flag from the active revision manifest.
+Freshness compares source and target commit hashes from `current.json` and the state and draft flag from the active revision manifest. Live approvals and build statuses are appended to the MCP context pack at read time and are not encrypted into the revision.
 
 ## 4. Write path and atomicity
 
@@ -101,8 +101,10 @@ sequenceDiagram
 - `PRContextService.sync` keeps one in-flight promise per PR, so parallel calls (refresh or not) share a fetch.
 - File tools and `list_synced_prs` never download PR details. Like every tool that reads local encrypted data, they first pass the repository access check (`AccessGate.unlock`: one Bitbucket request per repository, cached 60 s), then read the active revision or its status metadata. They never migrate directories.
 - `get_pr_comments` and `list_my_open_prs` fetch live data and store nothing. `get_pr_comments` then unlocks the repo to map inline comments to cached file ids. Comments change without new commits, so a commit-hash freshness check cannot cover them.
+- `get_pr_context_pack` also fetches approvals, build statuses, and comment threads live. It counts approvals without names, keeps the newest build result per pipeline key, counts only statuses for the current source commit, and labels older statuses separately. It summarizes at most 10 file groups. Build status pagination is limited to two pages and partial results are labeled. Each full comment is sanitized and capped at 4,000 characters; the file changes tool returns at most 50 symbols.
 - Re-review: when a sync replaces a *different* revision, `DataStore.saveRevision` compares the files against the active revision (by sanitized path and patch content) and stores `changes_since_previous` in the manifest. `context.md` renders it as "Changed since last sync".
 - Transient errors (429/502/503/504) are retried up to twice inside `fetchWithRetry`.
+- A context pack with incomplete commits, diffstat, or diff coverage includes a warning; it does not claim the data is complete. The latest PR listing falls back to an unfiltered query when needed but still filters authors locally; an empty failed listing is an error, not an empty result.
 - Missing credentials or an `ALLOWED_EMAILS` denial fail the call, even when cached data exists.
 
 ## 6. Process model

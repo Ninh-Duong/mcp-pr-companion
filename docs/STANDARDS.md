@@ -25,7 +25,7 @@
 | Size | Anything that can grow is paged: `offset` + `max_chars` (500–100000, default 16000) through `PRContextService.page()`. Lists take a `limit` with a max. |
 | Errors | Throw `Error` with an actionable message ("call X first", "use Y to list ids"). `run()` turns it into `{ isError: true, text: "Error: …" }` after `SecretScanner`. Log only the tool name and error type. |
 | Annotations | `readOnlyHint: false` if the tool writes anything, the local cache included. `openWorldHint: true` if it calls Bitbucket. |
-| Side effects | `get_pr_context_pack`, `sync_my_open_prs` (also run at startup by `AUTO_SYNC_ON_START`), and the CLI `sync <mode>` may sync and write the encrypted local cache. File tools, `get_pr_sync_status`, and `list_synced_prs` read local cache after the repository access check; they do not fetch PR details or migrate directories. `list_my_open_prs` and `get_pr_comments` fetch live Bitbucket data without writing the cache. `check_bitbucket_connection` is the read-only credential/allowlist health check required by mcp-hub; it does not verify access to a particular repository. Keep its success payload `{"connected": true}` (the hub smoke check validates it). |
+| Side effects | `get_pr_context_pack`, `sync_my_open_prs` (also run at startup by `AUTO_SYNC_ON_START`), and the CLI `sync <mode>` may sync and write the encrypted local cache. File tools, `get_pr_sync_status`, and `list_synced_prs` read local cache after the repository access check; they do not fetch PR details or migrate directories. `list_my_open_prs` and `get_pr_comments` fetch live Bitbucket data without writing the cache. The context pack also fetches live approvals, build statuses, and review threads; these are never stored. `check_bitbucket_connection` is the read-only credential/allowlist health check required by mcp-hub; it does not verify access to a particular repository. Keep its success payload `{"connected": true}` (the hub smoke check validates it). |
 | Instructions | `INSTRUCTIONS` < 1,500 characters, covering workflow and paging. Update it with every tool change. |
 
 ## 4. Privacy contract
@@ -33,11 +33,12 @@
 | Data | Rule | Code |
 |---|---|---|
 | Tokens, keys, passwords, connection strings, JWTs | Replaced by `[REDACTED:<CATEGORY>]` in every persisted text, patch, warning, tool error and log line | `SecretScanner` (single source; add patterns there) |
-| Emails, account UUIDs and HTML tags in PR title, description and commits | Replaced with `[REDACTED:EMAIL]` / `[REDACTED:UUID]`; tags stripped | `PIISanitizer` |
+| Emails, account UUIDs and HTML markup in PR title, description, commit subjects, branch names and comments | Replaced with `[REDACTED:EMAIL]` / `[REDACTED:UUID]`; known HTML tags and `<!-- -->` stripped (generics such as `List<string>` are kept) | `PIISanitizer` |
 | Author | Dropped unless `PRIVACY_REMOVE_AUTHOR=false` | `BitbucketAllowlistProjector` |
 | File paths | `PRIVACY_FILE_PATH_MODE`: `sanitized` (`first/.../last/two`, the default), `basename`, `opaque` (`file_NNNN`) or `full`. Applied to the index, file Markdown and diff headers. | `PathSanitizer`, `DataStore.saveRevision` |
 | Sensitive files (`.env`, keys, …) | Flagged high risk with `sensitive_configuration` | `SensitiveFilePolicy` |
-| PR comments | Same as PR text (`PIISanitizer` + `SecretScanner`). Author only when `PRIVACY_REMOVE_AUTHOR=false`. Inline paths per `PRIVACY_FILE_PATH_MODE` (omitted in `opaque`). Deleted comments dropped. | `PRContextService.getComments` |
+| PR comments | Same as PR text (`PIISanitizer` + `SecretScanner`). Author only when `PRIVACY_REMOVE_AUTHOR=false`; account kind is `app` or `person`. Inline paths per `PRIVACY_FILE_PATH_MODE` (omitted in `opaque`). Deleted comments dropped. Each comment capped at 4,000 chars with a `[truncated: …]` marker. | `PRContextService.getComments` |
+| Live approvals and build status | Never return participant names; sanitize status names/descriptions. Keep only the newest status per pipeline key, count current source commit results, and label older statuses separately using the documented commit link. | `PRContextService.reviewStatusSection` |
 | CLI logs | Additionally strip emails, UUIDs and `workspace/repo` | `LogRedactor` |
 | Credentials | Exist only in env and memory. Never written to disk, logged or echoed. | `ConfigManager`, `bin/cli.js` |
 | Everything under `ai-context/` | Encrypted at rest (`PRC1`, AES-256-GCM). Readable only after `AccessGate.unlock()`. The repository UUID (key material) is never logged, returned or written. Only names stay plaintext: never put content in a file or folder name. | `secure-file.ts`, `access-gate.ts`, [ENCRYPTION.md](ENCRYPTION.md) |

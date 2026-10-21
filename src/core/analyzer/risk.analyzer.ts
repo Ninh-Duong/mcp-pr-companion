@@ -65,14 +65,25 @@ export class RiskAnalyzer {
       evidence.push('Authentication, authorization, or security sensitive logic modified');
     }
 
-    // 3. Database Schema & Migration (database_schema)
+    // SQL keywords count only in SQL files, outside comments ("// drop index later" in C# is not a schema change).
+    const sqlText = ext === '.sql'
+      ? [...addedLines, ...deletedLines].filter(l => !/^\s*(--|\/\*|\*|\/\/)/.test(l)).join('\n')
+      : '';
+
+    // 3. Database Schema & Migration (database_schema): tables, indexes, constraints, renames (temp #tables excluded)
     if (
       classification.kind === 'database_migration' ||
-      /migrationBuilder\.(CreateTable|DropTable|AddColumn|DropColumn|AlterColumn)/i.test(allChangedText) ||
-      /CREATE\s+TABLE|ALTER\s+TABLE|DROP\s+TABLE/i.test(allChangedText)
+      /migrationBuilder\.(CreateTable|DropTable|AddColumn|DropColumn|AlterColumn|CreateIndex|DropIndex)/i.test(allChangedText) ||
+      /\b(CREATE|ALTER|DROP)\s+(TABLE(?!\s+#)|SCHEMA|TYPE|(UNIQUE\s+)?((NON)?CLUSTERED\s+)?INDEX)\b|\bADD\s+CONSTRAINT\b|\bsp_rename\b/i.test(sqlText)
     ) {
       tags.push('database_schema');
-      evidence.push('Database table or column structure altered');
+      evidence.push('Database table, index or constraint structure altered');
+    }
+
+    // 3b. Database programmable objects (database_object): views, procedures, functions, triggers
+    if (/\b(CREATE|ALTER|DROP)\s+(OR\s+(ALTER|REPLACE)\s+)?(MATERIALIZED\s+)?(VIEW|PROC|PROCEDURE|FUNCTION|TRIGGER)\b/i.test(sqlText)) {
+      tags.push('database_object');
+      evidence.push('Database view, procedure, function or trigger defined or dropped');
     }
 
     // 4. Proto Contract (proto_contract)
@@ -82,9 +93,9 @@ export class RiskAnalyzer {
     }
 
     // 5. Secret / Config / Environment (secret_config)
+    // Being a config file is not enough: .csproj edits used to rank first on that alone.
     if (
-      classification.kind === 'configuration' ||
-      basename === 'appsettings.json' ||
+      /^appsettings(\..+)?\.json$/i.test(basename) ||
       basename.endsWith('.env') ||
       // Secret-looking keys count only in config files, not in ordinary code.
       (/\.(json|ya?ml|config|xml|ini|properties|env)$/i.test(basename) && /apiKey|ConnectionString|Password|Secret/i.test(allChangedText))
@@ -111,12 +122,10 @@ export class RiskAnalyzer {
     let level: RiskLevel = 'none';
     if (tags.includes('auth_security') || tags.includes('database_schema')) {
       level = 'high';
-    } else if (tags.includes('public_api') || tags.includes('secret_config') || tags.includes('concurrency_transaction')) {
+    } else if (tags.some(t => ['public_api', 'secret_config', 'concurrency_transaction', 'database_object'].includes(t))) {
       level = 'medium';
-    } else if (tags.length > 0) {
-      level = 'low';
-    } else if (classification.kind === 'functional_logic') {
-      level = 'low';
+    } else {
+      level = 'low'; // any functional change (Rule 0 returned for the rest)
     }
 
     return {
