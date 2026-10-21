@@ -26,6 +26,7 @@ export interface ProjectedCommit {
 
 export interface ProjectedDiffstatItem {
   status: string;
+  conflict?: boolean;
   lines_added: number;
   lines_removed: number;
   old_path?: string;
@@ -34,6 +35,7 @@ export interface ProjectedDiffstatItem {
 
 export class BitbucketAllowlistProjector {
   static readonly MAX_DESCRIPTION_CHARS = 4000;
+  static readonly MAX_COMMIT_SUBJECT_CHARS = 200;
 
   /** Caps the description but says so: a silent cut would drop acceptance criteria without a trace. */
   static truncateDescription(raw: unknown): string {
@@ -57,7 +59,7 @@ export class BitbucketAllowlistProjector {
     const projected: ProjectedMetadata = {
       id: raw.id || 0,
       title: (raw.title || '').trim(),
-      description: this.truncateDescription(raw.description),
+      description: String(raw.description || '').trim(),
       state: raw.state || 'open',
       draft: isPRDraft(raw),
       source: {
@@ -82,21 +84,37 @@ export class BitbucketAllowlistProjector {
   static projectCommits(rawCommits: any[] = [], maxSubjects = 10): ProjectedCommit[] {
     if (!Array.isArray(rawCommits)) return [];
 
-    return rawCommits.slice(0, maxSubjects).map((c: any) => {
+    // Merge commits ("Merge branch …") say nothing about the change and would eat the cap.
+    // Bitbucket returns PR commits oldest first; keep the newest useful subjects for the context pack.
+    const max = Math.max(0, Math.floor(maxSubjects));
+    const useful = rawCommits.filter((c: any) => (c.parents?.length ?? 0) < 2);
+    const latest = max === 0 ? [] : useful.slice(-max).reverse();
+    return latest.map((c: any) => {
       const fullMsg = c.message || '';
-      const subject = fullMsg.split('\n')[0].trim();
       return {
         hash: c.hash || '',
-        subject
+        subject: fullMsg.split('\n')[0].trim()
       };
     });
+  }
+
+  /** Call after sanitizing complete source text so a cutoff cannot expose part of a secret or identifier. */
+  static truncateCommitSubject(text: string): string {
+    const marker = '… [truncated]';
+    return text.length > this.MAX_COMMIT_SUBJECT_CHARS
+      ? `${text.slice(0, this.MAX_COMMIT_SUBJECT_CHARS - marker.length).trimEnd()}${marker}`
+      : text;
   }
 
   static projectDiffstat(rawDiffstat: any[] = []): ProjectedDiffstatItem[] {
     if (!Array.isArray(rawDiffstat)) return [];
 
+    // Bitbucket also reports "merge conflict", "local deleted", "remote deleted", "local and remote deleted";
+    // the v4 index only knows four statuses, so map them and keep the conflict as a flag.
+    const KNOWN = ['added', 'modified', 'removed', 'renamed'];
     return rawDiffstat.map((item: any) => ({
-      status: item.status || 'modified',
+      status: String(item.status || 'modified').includes('deleted') ? 'removed' : KNOWN.includes(item.status) ? item.status : 'modified',
+      ...(item.status === 'merge conflict' ? { conflict: true } : {}),
       lines_added: item.lines_added || 0,
       lines_removed: item.lines_removed || 0,
       old_path: item.old?.path,

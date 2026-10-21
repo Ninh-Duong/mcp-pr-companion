@@ -12,7 +12,31 @@ export interface AIReadingMetadata {
   token_budget: 'small' | 'medium' | 'large' | 'extensive';
 }
 
+/** Kinds a reviewer rarely needs to open: listed by id under "low_priority", never in Read next / Optional. */
+const LOW_VALUE_KINDS = ['test_only', 'unit_test', 'generated_only', 'rename_only', 'formatting_only', 'whitespace_only', 'comment_only', 'documentation_only'];
+/** Files with these tags are always in Read next, whatever their size or kind. */
+const MUST_READ_TAGS = ['auth_security', 'database_schema', 'public_api', 'sensitive_configuration', 'merge_conflict'];
+/** Read next never grows past this, however many must-read files there are. */
+const MAX_REQUIRED = 8;
+
 export class ContextModeClassifier {
+  /** Review priority of one file: change volume (capped), risk tags, and brand-new logic. Shared with files.md ordering. */
+  static score(f: FileIndexEntryV4): number {
+    const has = (...tags: string[]) => tags.some(t => f.risk_tags.includes(t));
+    // A renamed appsettings or a whitespace-only .env edit is still a must-read.
+    if (LOW_VALUE_KINDS.includes(f.change_kind) && !has(...MUST_READ_TAGS)) return -1;
+    return Math.min(f.additions + f.deletions, 200)
+      + (has(...MUST_READ_TAGS) ? 60 : 0)
+      + (has('secret_config', 'concurrency_transaction', 'database_object') ? 40 : 0)
+      + (f.status === 'added' && f.change_kind === 'functional_logic' ? 30 : 0)
+      + (has('dependency') ? 10 : 0);
+  }
+
+  /** Every file, highest review priority first (stable for equal scores). */
+  static rank(fileEntries: FileIndexEntryV4[]): FileIndexEntryV4[] {
+    return [...fileEntries].sort((a, b) => this.score(b) - this.score(a));
+  }
+
   public static classify(
     manifest: Omit<PRManifestV4, 'schema_version'> | PRManifestV4,
     fileEntries: FileIndexEntryV4[]
@@ -26,27 +50,34 @@ export class ContextModeClassifier {
     const highRiskTags = ['public_api', 'auth_security', 'database_schema', 'secret_config'];
     const containsHighRiskTags = riskTags.some(tag => highRiskTags.includes(tag));
 
-    // Sort files by risk and change volume to identify priority files
-    const priorityFiles = [...fileEntries].sort((a, b) => {
-      const getWeight = (tags: string[]) => {
-        if (tags.includes('auth_security') || tags.includes('public_api')) return 100;
-        if (tags.includes('database_schema') || tags.includes('secret_config')) return 80;
-        return 10;
-      };
-      return (getWeight(b.risk_tags) + b.additions + b.deletions) - (getWeight(a.risk_tags) + a.additions + a.deletions);
-    });
+    const ranked = this.rank(fileEntries);
+    const lowValue = ranked.filter(f => this.score(f) < 0);
+    // A PR made only of tests or docs still gets something to read.
+    const priorityFiles = lowValue.length === ranked.length ? ranked : ranked.filter(f => this.score(f) >= 0);
+    const ref = (f: FileIndexEntryV4) => `files/${f.id}.md`;
 
-    const skimKinds = ['comment_only', 'documentation_only', 'whitespace_only', 'formatting_only', 'test_only', 'unit_test'];
+    // Read next: the top `count`, plus every must-read file; Optional: the next five.
+    const pick = (count: number) => {
+      const required = [...priorityFiles.slice(0, count), ...priorityFiles.slice(count).filter(f => f.risk_tags.some(t => MUST_READ_TAGS.includes(t)))].slice(0, MAX_REQUIRED);
+      return {
+        required_next_files: required.map(ref),
+        optional_next_files: priorityFiles.filter(f => !required.includes(f)).slice(0, 5).map(ref)
+      };
+    };
+    const lowPriority = lowValue.length > 0 && lowValue.length < ranked.length
+      ? [`low_priority: ${lowValue.slice(0, 10).map(f => `${f.id} (${f.change_kind})`).join(', ')}${lowValue.length > 10 ? ` (+${lowValue.length - 10})` : ''}`]
+      : [];
+
+    const skimKinds = ['comment_only', 'documentation_only', 'whitespace_only', 'formatting_only', 'rename_only', 'test_only', 'unit_test'];
     const isSkimKind = skimKinds.includes(primaryKind);
 
     // Rule 1: Skim Mode
     if (totalFiles <= 3 && (overallRisk === 'none' || overallRisk === 'low') && isSkimKind && !containsHighRiskTags) {
-      const optionalNext = priorityFiles.length > 0 ? [`files/${priorityFiles[0].id}.md`] : [];
       return {
         mode: 'skim',
         reason: `${primaryKind}, risk ${overallRisk}, ${totalFiles} file(s) changed`,
         required_next_files: [],
-        optional_next_files: optionalNext,
+        optional_next_files: ranked.slice(0, 1).map(ref),
         skip_categories: ['full_patch_review', 'security_review', 'test_impact_review'],
         token_budget: 'small'
       };
@@ -54,23 +85,17 @@ export class ContextModeClassifier {
 
     // Rule 2: Deep Review Mode
     if (overallRisk === 'high' || overallRisk === 'critical' || totalFiles > 30) {
-      const reqNext = priorityFiles.slice(0, 5).map(f => `files/${f.id}.md`);
       return {
         mode: 'deep_review',
         reason: `High risk (${overallRisk}) or large file count (${totalFiles} files)`,
-        required_next_files: reqNext,
-        optional_next_files: priorityFiles.slice(5, 10).map(f => `files/${f.id}.md`),
-        skip_categories: [],
+        ...pick(5),
+        skip_categories: lowPriority,
         token_budget: 'extensive'
       };
     }
 
     // Rule 3: Inspect Priority Files Mode
     if (containsHighRiskTags || riskyFilesCount > 0 || totalFiles > 10) {
-      const riskyFiles = priorityFiles.filter(f => f.risk_tags.length > 0);
-      const reqNext = (riskyFiles.length > 0 ? riskyFiles : priorityFiles).slice(0, 3).map(f => `files/${f.id}.md`);
-      const optNext = priorityFiles.filter(f => !reqNext.includes(`files/${f.id}.md`)).slice(0, 5).map(f => `files/${f.id}.md`);
-
       const reasons: string[] = [];
       if (containsHighRiskTags) reasons.push(`risk tags: ${riskTags.join(', ')}`);
       if (riskyFilesCount > 0) reasons.push(`${riskyFilesCount} risky file(s)`);
@@ -79,23 +104,18 @@ export class ContextModeClassifier {
       return {
         mode: 'inspect_priority_files',
         reason: reasons.join('; '),
-        required_next_files: reqNext,
-        optional_next_files: optNext,
-        skip_categories: ['generated_files'],
+        ...pick(3),
+        skip_categories: ['generated_files', ...lowPriority],
         token_budget: 'large'
       };
     }
 
     // Rule 4: Standard Mode
-    const reqNext = priorityFiles.slice(0, 2).map(f => `files/${f.id}.md`);
-    const optNext = priorityFiles.slice(2, 5).map(f => `files/${f.id}.md`);
-
     return {
       mode: 'standard',
       reason: `Standard changes in ${totalFiles} file(s), primary kind: ${primaryKind}`,
-      required_next_files: reqNext,
-      optional_next_files: optNext,
-      skip_categories: ['unmodified_vendor_files'],
+      ...pick(2),
+      skip_categories: ['unmodified_vendor_files', ...lowPriority],
       token_budget: 'medium'
     };
   }

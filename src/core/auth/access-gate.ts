@@ -32,6 +32,7 @@ export class AccessGate {
   static material(workspace: string, repoSlug: string): string {
     const entry = this.unlocked.get(this.key(workspace, repoSlug));
     if (!entry || entry.until <= Date.now()) {
+      this.unlocked.delete(this.key(workspace, repoSlug)); // do not keep expired key material in memory
       throw new Error(`No access: ${workspace}/${repoSlug} is locked. Its data is only readable after a successful Bitbucket check.`);
     }
     return entry.material;

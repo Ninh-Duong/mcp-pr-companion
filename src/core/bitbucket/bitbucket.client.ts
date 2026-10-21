@@ -36,6 +36,12 @@ export class BitbucketClient {
     return PaginationHelper.fetchAllPages(url, this.headers, options);
   }
 
+  /** Build statuses reported on the PR's commits (pipelines, external CI). */
+  async getPRStatuses(workspace: string, repoSlug: string, prId: number, options: BitbucketFetchOptions = {}): Promise<PaginatedResult<any>> {
+    const url = `https://api.bitbucket.org/2.0/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/pullrequests/${prId}/statuses?pagelen=50`;
+    return PaginationHelper.fetchAllPages(url, this.headers, { ...options, maxPages: 2 });
+  }
+
   /** Repository details (needs read:repository); its uuid is the ai-context key material. */
   async getRepository(workspace: string, repoSlug: string, options: BitbucketFetchOptions = {}): Promise<any> {
     return this.fetchJson(`https://api.bitbucket.org/2.0/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}`, options);

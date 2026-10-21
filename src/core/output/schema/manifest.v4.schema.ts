@@ -34,11 +34,15 @@ export const PRManifestV4Schema = z.object({
   risk_summary: z.object({
     overall_level: z.enum(['none', 'low', 'medium', 'high', 'critical']),
     total_risk_tags: z.array(z.string()),
-    risky_files_count: z.number()
+    risky_files_count: z.number(),
+    // "<tag>: file_0001, file_0004": why the level is what it is.
+    reasons: z.array(z.string()).optional()
   }),
   stats: z.object({
     files_changed: z.number(),
-    commits_count: z.number()
+    // Every commit of the PR, merges included; commits.jsonl holds at most commits_shown of them.
+    commits_count: z.number(),
+    commits_shown: z.number().optional()
   }),
   important_file_ids: z.array(z.string()),
   index_refs: z.object({

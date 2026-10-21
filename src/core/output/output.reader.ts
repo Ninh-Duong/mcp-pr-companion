@@ -191,7 +191,7 @@ export class OutputReader {
   static normalizeFileId(fileId: string | number): string {
     const raw = String(fileId).trim();
     if (/^\d+$/.test(raw)) return `file_${String(parseInt(raw, 10)).padStart(4, '0')}`;
-    if (/^file_\d+$/.test(raw)) return raw;
+    if (/^file_\d+$/.test(raw)) return `file_${String(parseInt(raw.slice(5), 10)).padStart(4, '0')}`;
     throw new Error(`Invalid file_id "${raw}". Expected e.g. "file_0001".`);
   }
 

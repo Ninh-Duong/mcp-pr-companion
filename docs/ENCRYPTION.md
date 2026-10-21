@@ -61,7 +61,7 @@ sequenceDiagram
   - **network error**: `No access: cannot connect to Bitbucket (…)`.
 - A successful check is cached for **60 s** per repository (`AccessGate.TTL_MS`), so a burst of tool calls costs one request.
 - Readers and writers are synchronous and call `AccessGate.material()`, which throws `No access: … is locked` if nobody unlocked the repository. Every entry point unlocks first: all MCP tools, `GenerationJob` (CLI generate) and the CLI viewer.
-- **Offline means no access.** Cached data cannot be read without a successful check. This is deliberate.
+- **A local read needs a successful repository check.** Its result is cached for 60 seconds. If a later PR metadata request fails during that window, `get_pr_context_pack` may show the cached revision with a note; if the access check itself fails or expires, the cache stays sealed.
 
 ## 5. Reading the data
 

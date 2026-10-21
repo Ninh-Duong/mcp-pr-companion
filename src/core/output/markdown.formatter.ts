@@ -2,7 +2,7 @@ import { PRManifestV4 } from './schema/manifest.v4.schema.js';
 import { FileIndexEntryV4 } from './schema/file_index.v4.schema.js';
 import { FileChangeV4 } from './schema/file_change.v4.schema.js';
 import { PRCoverageV4 } from './schema/coverage.v4.schema.js';
-import { AIReadingMetadata } from '../analyzer/context-mode.classifier.js';
+import { AIReadingMetadata, ContextModeClassifier } from '../analyzer/context-mode.classifier.js';
 import path from 'path';
 import { getPRStorageStatus } from '../pr-status.js';
 
@@ -11,7 +11,9 @@ export class MarkdownFormatter {
     repository: string,
     manifest: PRManifestV4,
     commitsJsonl: string[],
-    aiReading: AIReadingMetadata
+    aiReading: AIReadingMetadata,
+    fileEntries: FileIndexEntryV4[] = [],
+    coverage?: PRCoverageV4
   ): string {
     const lines: string[] = [];
     // Classifier entries are "files/file_0001.md"; agents pass the bare id to the file tools.
@@ -19,21 +21,39 @@ export class MarkdownFormatter {
 
     lines.push(`# PR Context Pack: ${manifest.title}`);
     lines.push('');
+
+    // A failed or cut download must be visible: otherwise missing files look like a small, safe PR.
+    for (const name of ['diff', 'diffstat', 'commits'] as const) {
+      const s = coverage?.sections[name];
+      if (!s || s.status === 'complete') continue;
+      const why = s.warning ? ` (${s.warning.length > 200 ? `${s.warning.slice(0, 200)}…` : s.warning})` : '';
+      lines.push(`Warning: ${name} ${s.status}${why}. Some changes may be missing; call get_pr_context_pack with refresh=true.`);
+    }
+    if (lines.length > 2) lines.push('');
     lines.push('## Read Strategy');
     lines.push(`Mode: ${aiReading.mode} (token budget: ${aiReading.token_budget})`);
     lines.push(`Reason: ${aiReading.reason}`);
     if (aiReading.required_next_files.length > 0) lines.push(`Read next: ${ids(aiReading.required_next_files)}`);
     if (aiReading.optional_next_files.length > 0) lines.push(`Optional: ${ids(aiReading.optional_next_files)}`);
-    if (aiReading.skip_categories.length > 0) lines.push(`Skip: ${aiReading.skip_categories.join(', ')}`);
+    const LOW = 'low_priority: ';
+    const skip = aiReading.skip_categories.filter(s => !s.startsWith(LOW));
+    if (skip.length > 0) lines.push(`Skip: ${skip.join(', ')}`);
+    for (const s of aiReading.skip_categories.filter(s => s.startsWith(LOW))) lines.push(`Low priority: ${s.slice(LOW.length)}`);
     lines.push('');
 
     const since = manifest.changes_since_previous;
     if (since) {
+      const byId = new Map(fileEntries.map(f => [f.id, f]));
       lines.push(`## Changed since last sync (${since.previous_revision})`);
-      lines.push(since.changed_file_ids.length > 0
-        ? `Files: ${since.changed_file_ids.join(', ')}`
-        : 'Files: none (only commits or metadata moved)');
-      if (since.removed_paths.length > 0) lines.push(`No longer in the PR: ${since.removed_paths.join(', ')}`);
+      if (since.changed_file_ids.length === 0) lines.push('Files: none (only commits or metadata moved)');
+      // Capped: after a rebase every file can differ (invariant 4).
+      for (const id of since.changed_file_ids.slice(0, 30)) {
+        const f = byId.get(id);
+        lines.push(f ? `- ${id} \`${f.path}\` (${f.status})` : `- ${id}`);
+      }
+      if (since.changed_file_ids.length > 30) lines.push(`- … ${since.changed_file_ids.length - 30} more changed files: use search_pr_files`);
+      const removed = since.removed_paths;
+      if (removed.length > 0) lines.push(`No longer in the PR: ${removed.slice(0, 20).join(', ')}${removed.length > 20 ? ` (+${removed.length - 20} more)` : ''}`);
       lines.push('');
     }
     lines.push('## Overview');
@@ -42,7 +62,8 @@ export class MarkdownFormatter {
     lines.push(`- **State**: ${manifest.state}`);
     lines.push(`- **PR Status**: ${getPRStorageStatus(manifest.state, manifest.is_draft)}`);
     lines.push(`- **Ticket**: ${manifest.ticket_id || 'N/A'}`);
-    lines.push(`- **Overall Risk**: ${manifest.risk_summary.overall_level}`);
+    const why = manifest.risk_summary.reasons ?? [];
+    lines.push(`- **Overall Risk**: ${manifest.risk_summary.overall_level}${why.length > 0 ? ` (${why.join('; ')})` : ''}`);
     lines.push('');
 
     lines.push('## Change Summary');
@@ -56,7 +77,10 @@ export class MarkdownFormatter {
     lines.push(manifest.description || '_No description provided._');
     lines.push('');
 
-    lines.push('## Commits');
+    const { commits_count, commits_shown = commitsJsonl.length } = manifest.stats;
+    lines.push(commits_count > commits_shown
+      ? `## Commits (${commits_shown} of ${commits_count} shown, newest first; merge commits omitted)`
+      : '## Commits');
     commitsJsonl.forEach((commitRaw) => {
       try {
         const c = JSON.parse(commitRaw);
@@ -74,20 +98,21 @@ export class MarkdownFormatter {
 
     lines.push('# Files');
     lines.push('');
-    lines.push('## Read First');
-
-    const riskyOrPriority = fileEntries.filter((f) => f.risk_tags.length > 0);
-    const standardFiles = fileEntries.filter((f) => f.risk_tags.length === 0);
+    lines.push('## All files (highest review priority first)');
 
     lines.push('| File ID | Path | Kind | Status | +/- | Risk Tags |');
     lines.push('| --- | --- | --- | --- | --- | --- |');
 
-    [...riskyOrPriority, ...standardFiles].forEach((f) => {
+    // Capped at 200 rows: the table is appended to the context pack by include_file_table (invariant 4).
+    const ranked = ContextModeClassifier.rank(fileEntries);
+    ranked.slice(0, 200).forEach((f) => {
       const riskTagsStr = f.risk_tags.length > 0 ? f.risk_tags.join(', ') : 'none';
+      const shownPath = f.old_path && f.old_path !== f.path ? `${f.old_path} → ${f.path}` : f.path;
       lines.push(
-        `| ${f.id} | ${f.path} | ${f.change_kind} | ${f.status} | +${f.additions}/-${f.deletions} | ${riskTagsStr} |`
+        `| ${f.id} | ${shownPath} | ${f.change_kind} | ${f.status} | +${f.additions}/-${f.deletions} | ${riskTagsStr} |`
       );
     });
+    if (ranked.length > 200) lines.push('', `${ranked.length - 200} more files: use search_pr_files to list them.`);
 
     return lines.join('\n');
   }
@@ -125,6 +150,12 @@ export class MarkdownFormatter {
     lines.push(`- **Additions**: +${entry.additions}`);
     lines.push(`- **Deletions**: -${entry.deletions}`);
     lines.push(`- **Risk Tags**: ${entry.risk_tags.length > 0 ? entry.risk_tags.join(', ') : 'none'}`);
+    if (entry.old_path && entry.old_path !== entry.path) lines.push(`- **Moved from**: \`${entry.old_path}\``);
+    const symbols = detail.change.symbols;
+    if (symbols.length > 0) {
+      const shown = symbols.slice(0, 12).map(s => `${s.name} (${s.kind}${s.relationship === 'containing_symbol' ? ', contains change' : `, ${s.change.replace('_symbol', '')}`})`);
+      lines.push(`- **Symbols**: ${shown.join(', ')}${symbols.length > 12 ? ` (+${symbols.length - 12})` : ''}`);
+    }
     lines.push('');
 
     lines.push('## Diff Patch');

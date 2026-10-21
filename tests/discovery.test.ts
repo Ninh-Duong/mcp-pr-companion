@@ -55,3 +55,23 @@ assert.equal(partial.prs.length, 1);
 assert.equal(partial.complete, false);
 assert.ok(partial.warnings.length > 0);
 console.log('  ✓ interrupted state pagination is reported as incomplete with partial results');
+
+globalThis.fetch = (async () => new Response('{"error":"rate limited"}', {
+  status: 429,
+  statusText: 'Too Many Requests',
+  headers: { 'retry-after': '0' }
+})) as typeof fetch;
+await assert.rejects(
+  PRDiscoveryService.discoverOpenPRs('dev@example.com', 'token', 'acme', 'demo', me),
+  /Could not list pull requests for acme\/demo: .*HTTP 429/
+);
+console.log('  ✓ a failed open-PR listing is not reported as an empty list');
+
+let emptyListingCalls = 0;
+globalThis.fetch = (async () => {
+  emptyListingCalls++;
+  return new Response(JSON.stringify({ values: [] }), { status: 200 });
+}) as typeof fetch;
+assert.deepEqual(await PRDiscoveryService.discoverOpenPRs('dev@example.com', 'token', 'acme', 'demo', me), []);
+assert.equal(emptyListingCalls, 2, 'falls back to an unfiltered query, then client-side filters');
+console.log('  ✓ a successful empty listing returns an empty list');

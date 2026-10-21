@@ -9,15 +9,13 @@ import { BitbucketCollector } from '../core/bitbucket/bitbucket.collector.js';
 const { version } = JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf-8'));
 
 export const INSTRUCTIONS = `mcp-pr-companion provides sanitized Bitbucket PR context.
-1. Start with get_pr_context_pack(pr_url). It syncs a missing or stale PR and retries pending status-folder migration, then returns a summary and Read Strategy.
-2. Use search_pr_files(pr_url, filters) to find file ids; read one with get_pr_file_context or get_pr_file_changes.
-3. Use get_pr_comments(pr_url) for review feedback; include_resolved=false shows open threads only.
+1. Start with get_pr_context_pack(pr_url). It syncs when commits, state, draft flag, or storage location changed; the pack includes live approvals, build status and open review threads.
+2. Use search_pr_files(pr_url, filters) to find file ids; read one with get_pr_file_context or get_pr_file_changes. Long text is paged by offset.
+3. Use get_pr_comments(pr_url) for full review feedback; include_resolved=false shows open comments only.
 Re-review: open only ids in the pack's "Changed since last sync" section.
-No PR URL? list_my_open_prs finds the account's open PRs; list_synced_prs lists cached PRs by status. sync_my_open_prs syncs open PRs; show its prs as a table.
+No PR URL? list_my_open_prs finds the account's open PRs; list_synced_prs lists encrypted local PRs by status. sync_my_open_prs syncs open PRs; show its prs as a table.
 The cache is encrypted. Never read ai-context/ files directly. "No access: …" means the access check failed.
-Page long text with next_offset or "continue with offset N".
-Paths are sanitized; filter on values returned by search_pr_files. Tools never write to Bitbucket.
-check_bitbucket_connection checks credentials and the account allowlist; local cache reads also require access to that repository.`;
+Paths and text are sanitized; filter on paths returned by search_pr_files. Tools never write to Bitbucket.`;
 
 const prUrl = z.string().min(1).describe('Full Bitbucket Cloud PR URL: https://bitbucket.org/{workspace}/{repo}/pull-requests/{id}');
 const fileId = z.union([z.string(), z.number().int().nonnegative()]).describe('File id from the context pack or search_pr_files, e.g. "file_0001" (a number such as 1 also works).');
@@ -51,7 +49,7 @@ export function createServer(): McpServer {
     {
       title: 'PR context pack',
       description:
-        'START HERE. Returns the Markdown context pack for a Bitbucket PR: overview, change summary, description, commits and a Read Strategy naming the files to open next. Syncs from Bitbucket when the PR is not cached, its commits/state/draft flag changed, or storage migration is pending.',
+        'START HERE. Returns sanitized PR context, a Read Strategy, and live approvals, build status and open review threads. Syncs when missing, commits/state/draft changed, or status-folder migration is pending. Cached revisions remain available when Bitbucket is temporarily unreachable.',
       inputSchema: {
         pr_url: prUrl,
         refresh: z.boolean().default(false).describe('Force a full re-sync even if the cached revision looks current.'),
@@ -99,7 +97,7 @@ export function createServer(): McpServer {
     {
       title: 'PR file changes (JSON)',
       description:
-        'JSON for one changed file of a synced PR: classification with evidence, risk level/tags/evidence, symbols, and optionally a page of the sanitized patch ({text, total_chars, next_offset}).',
+        'JSON for one changed file of a synced PR: classification with evidence, risk level/tags/evidence, up to 50 symbols (symbols_total when capped), and optionally a page of the sanitized patch ({text, total_chars, next_offset}).',
       inputSchema: {
         pr_url: prUrl,
         file_id: fileId,
@@ -118,7 +116,7 @@ export function createServer(): McpServer {
     {
       title: 'PR comments',
       description:
-        'Review comments of a Bitbucket PR, fetched live: general and inline (with file_id/path/line when the PR is synced), resolved flag, sanitized text. Paged by offset/limit. Returns JSON {total, complete, comments, next_offset}.',
+        'Review comments of a Bitbucket PR, fetched live: general and inline (with file_id/path/line when the PR is synced), resolved flag, sanitized text capped at 4,000 chars per comment, and author_kind (app or person). Paged by offset/limit. Returns JSON {total, complete, comments, next_offset}.',
       inputSchema: {
         pr_url: prUrl,
         include_resolved: z.boolean().default(true).describe('false = only unresolved threads.'),

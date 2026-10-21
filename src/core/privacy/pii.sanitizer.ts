@@ -23,8 +23,10 @@ export class PIISanitizer {
       clean = clean.replace(uuidRegex, '[REDACTED:UUID]');
     }
 
-    // Strip HTML markup
-    clean = clean.replace(/<[^>]*>/g, '');
+    // Strip HTML markup: comments and known tags only, so List<string> or "a < b && c > d" survive.
+    clean = clean
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .replace(/<\/?(?:p|div|span|br|hr|img|a|b|i|u|em|strong|ul|ol|li|h[1-6]|table|thead|tbody|tr|td|th|code|pre|details|summary|blockquote|sup|sub)\b[^>]*>/gi, '');
 
     return clean;
   }

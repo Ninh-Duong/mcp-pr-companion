@@ -67,7 +67,8 @@ export class DiffParser {
           additions: 0,
           deletions: 0,
           hunks: [],
-          headerLines: [line]
+          // Quoted headers are rewritten decoded, so path sanitizing can find the real path in them.
+          headerLines: [line.includes('"') ? `diff --git a/${paths.oldPath} b/${paths.newPath}` : line]
         };
         continue;
       }
@@ -98,8 +99,8 @@ export class DiffParser {
 
       // File headers only appear before the first hunk; inside a hunk '--- x' is a deleted line '-- x'.
       if (!currentHunk && line.startsWith('--- ')) {
-        currentFile.headerLines.push(line);
-        const p = line.substring(4).trim();
+        const p = this.unquote(line.substring(4).trim());
+        currentFile.headerLines.push(`--- ${p}`);
         if (p === '/dev/null') {
           currentFile.oldPath = null;
           currentFile.status = 'added';
@@ -110,8 +111,8 @@ export class DiffParser {
       }
 
       if (!currentHunk && line.startsWith('+++ ')) {
-        currentFile.headerLines.push(line);
-        const p = line.substring(4).trim();
+        const p = this.unquote(line.substring(4).trim());
+        currentFile.headerLines.push(`+++ ${p}`);
         if (p === '/dev/null') {
           currentFile.newPath = currentFile.oldPath || '';
           currentFile.status = 'deleted';
@@ -191,11 +192,33 @@ export class DiffParser {
     return { files };
   }
 
+  /**
+   * git C-quotes paths with non-ASCII bytes or `"`, `\`, tab: "caf\303\251.md". Bitbucket's diffstat has the
+   * decoded path, so decode escapes (octal bytes are UTF-8) to make the two match.
+   */
+  static unquote(p: string): string {
+    if (p.length < 2 || !p.startsWith('"') || !p.endsWith('"')) return p;
+    const s = p.slice(1, -1);
+    const bytes: number[] = [];
+    const ESCAPES: Record<string, number> = { n: 10, t: 9, '"': 34, '\\': 92 };
+    for (let i = 0; i < s.length; i++) {
+      if (s[i] === '\\' && /^[0-7]{3}$/.test(s.slice(i + 1, i + 4))) {
+        bytes.push(parseInt(s.slice(i + 1, i + 4), 8));
+        i += 3;
+      } else if (s[i] === '\\' && s[i + 1] in ESCAPES) {
+        bytes.push(ESCAPES[s[++i]]);
+      } else {
+        bytes.push(...Buffer.from(s[i], 'utf8'));
+      }
+    }
+    return Buffer.from(bytes).toString('utf8');
+  }
+
   private static parseDiffGitPaths(line: string): { oldPath: string; newPath: string } {
     // Standard format: diff --git a/path/to/file b/path/to/file
     const matchQuoted = line.match(/^diff --git "a\/(.+)" "b\/(.+)"$/);
     if (matchQuoted) {
-      return { oldPath: matchQuoted[1], newPath: matchQuoted[2] };
+      return { oldPath: this.unquote(`"${matchQuoted[1]}"`), newPath: this.unquote(`"${matchQuoted[2]}"`) };
     }
 
     const rest = line.substring(11).trim(); // Remove 'diff --git '

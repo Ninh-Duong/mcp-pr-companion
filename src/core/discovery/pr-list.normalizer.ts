@@ -19,9 +19,10 @@ export interface DiscoveredPR {
 
 export class PRListNormalizer {
   static normalizePR(rawPr: any, cacheStatus: 'Missing' | 'Cached' | 'Outdated'): DiscoveredPR {
-    const title = rawPr.title ? SecretScanner.scanAndRedact(PIISanitizer.sanitizeText(rawPr.title)) : 'Untitled PR';
-    const sourceBranch = rawPr.source?.branch?.name || 'unknown';
-    const targetBranch = rawPr.destination?.branch?.name || 'unknown';
+    const clean = (text: string) => SecretScanner.scanAndRedact(PIISanitizer.sanitizeText(text));
+    const title = rawPr.title ? clean(rawPr.title) : 'Untitled PR';
+    const sourceBranch = clean(rawPr.source?.branch?.name || 'unknown');
+    const targetBranch = clean(rawPr.destination?.branch?.name || 'unknown');
     const sourceCommitHash = rawPr.source?.commit?.hash;
     const destinationCommitHash = rawPr.destination?.commit?.hash;
 

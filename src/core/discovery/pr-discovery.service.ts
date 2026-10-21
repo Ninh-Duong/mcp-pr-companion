@@ -95,7 +95,11 @@ export class PRDiscoveryService {
     currentUserUuid?: string
   ): Promise<DiscoveredPR[]> {
     const result = await this.discoverMyPRs(emailOrContext, token, workspace, repoSlug, currentUserUuid, ['OPEN']);
-    if (!result.complete) throw new Error(`PR discovery was incomplete: ${result.warnings.join('; ') || 'Bitbucket pagination stopped early.'}`);
+    if (!result.complete) {
+      const context = this.context(emailOrContext, token, workspace, repoSlug, currentUserUuid);
+      const { workspace: ws, repoSlug: repo } = context.repository;
+      throw new Error(`Could not list pull requests for ${ws}/${repo}: discovery was incomplete: ${result.warnings.join('; ') || 'Bitbucket pagination stopped early.'}`);
+    }
     return result.prs;
   }
 }

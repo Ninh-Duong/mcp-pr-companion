@@ -132,17 +132,19 @@ The MCP tools (prefixed with pr__ when exposed through mcp-hub) are:
 | get_pr_context_pack | Get the PR context pack. Start here; it syncs when missing, when commits/state/draft status changed, or when directory migration is pending. Set refresh=true to force a sync. |
 | search_pr_files | Find files by path, language, status, change kind, or risk tag. |
 | get_pr_file_context | Read one file summary and a paged sanitized diff. |
-| get_pr_file_changes | Get a file's classification, risk, symbols, and an optional diff page as JSON. |
+| get_pr_file_changes | Get a file's classification, risk, up to 50 symbols, and an optional diff page as JSON. |
 | get_pr_sync_status | Check whether a PR is cached and view its PR status, revision, sync time, and commit hashes. |
 | list_synced_prs | List locally synced PRs, optionally filtered by repository and open, draft, merged, or declined status. Results are paged. |
-| get_pr_comments | Read sanitized review comments, including inline comments with file_id when available. |
+| get_pr_comments | Read sanitized live review comments, including inline comments with file_id when available and whether the author is an app or person. Each comment is capped at 4,000 characters. |
 | list_my_open_prs | List your open PRs and their pr_url for a configured repository or all configured repositories. |
 | sync_my_open_prs | Sync your open PRs for one or all configured repositories. This existing tool retains its open-only behavior. |
 | check_bitbucket_connection | Check live Bitbucket credentials and the account allowlist. |
 
+The context pack includes live approval and build counts, plus open review thread summaries. These are fetched on each pack read and are not stored in the encrypted revision; comment text is capped at 4,000 characters and build statuses are limited to two pages.
+
 To discover cached PRs, call list_synced_prs and filter by status. Then use the returned pr_url with get_pr_context_pack or the file tools. Do not read ai-context files directly because they are encrypted.
 
-Run the CLI sync command locally to fetch historical groups, then use list_synced_prs through MCP to browse and read the encrypted cache. list_synced_prs, file readers, and get_pr_sync_status read local cache after a repository access check; they do not fetch PR details. list_my_open_prs and get_pr_comments fetch live data from Bitbucket. get_pr_context_pack checks freshness and can sync. The Hub's pr__sync_my_open_prs tool keeps its existing open-only behavior. AUTO_SYNC_ON_START=true syncs open PRs in the background whenever the MCP server starts.
+Run the CLI sync command locally to fetch historical groups, then use list_synced_prs through MCP to browse and read the encrypted cache. list_synced_prs, file readers, and get_pr_sync_status read local cache after a repository access check; they do not fetch PR details or migrate directories. list_my_open_prs and get_pr_comments fetch live data from Bitbucket. get_pr_context_pack checks freshness and can sync; if freshness metadata is unavailable, it shows cached context with a note and skips other live requests. The Hub's pr__sync_my_open_prs tool keeps its existing open-only behavior. AUTO_SYNC_ON_START=true syncs open PRs in the background whenever the MCP server starts.
 
 ### Run under mcp-hub
 
@@ -167,6 +169,7 @@ All configuration is stored in .env. See [.env.example](.env.example) for the fu
 | AUTO_SYNC_ON_START | No | true syncs the account's open PRs in configured repositories in the background. Default: false. |
 | TICKET_PREFIXES | No | Preferred ticket prefixes. Default: WCE-,PROJ-,JIRA-. The tool also detects KEY-123 in branch names or [KEY-123] in titles. |
 | PRIVACY_* | No | Privacy controls for returned and stored PR content. Defaults are safe. |
+| PRIVACY_MAX_COMMIT_SUBJECTS | No | Maximum commit subjects stored and shown per PR. Default: 10; merge commits are excluded. |
 | AI_CONTEXT_ROOT | No | Context storage directory. Default: ai-context. |
 | AI_CONTEXT_COMPANY | No | Optional directory inserted before <workspace>. |
 | DEBUG | No | true enables additional MCP log messages. Default: false. |
@@ -181,7 +184,7 @@ All configuration is stored in .env. See [.env.example](.env.example) for the fu
 ### Encrypted ai-context data
 
 - Every file under ai-context is encrypted with AES-256-GCM. File names reveal the workspace, repository, PR number, and file ids, but file content is not readable in a file browser.
-- Read content through MCP tools or the CLI menu after a successful Bitbucket access check using .env credentials and ALLOWED_EMAILS. Offline access is not available.
+- Read content through MCP tools or the CLI menu after a Bitbucket access check using .env credentials and ALLOWED_EMAILS. The successful repository check is cached for 60 seconds. If a later PR metadata request fails during that window, get_pr_context_pack can show the cached revision with a note; if the repository access check fails or expires, the encrypted cache stays sealed.
 - The encryption key is derived from the repository UUID returned by Bitbucket and held only in memory.
 - Data created before encryption can be removed with .\run.cmd purge-plaintext; sync the PRs again afterward.
 - See [docs/ENCRYPTION.md](docs/ENCRYPTION.md) for details and limitations.

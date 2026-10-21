@@ -15,7 +15,8 @@ export interface HttpOptions {
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 function retryDelay(res: Response, attempt: number): number {
-  const header = Number(res.headers.get('retry-after'));
+  const raw = res.headers.get('retry-after');
+  const header = raw === null || raw.trim() === '' ? NaN : Number(raw); // Number(null) is 0: no instant retries
   return Number.isFinite(header) && header >= 0 ? Math.min(header * 1000, MAX_RETRY_AFTER_MS) : BACKOFF_MS[attempt];
 }
 

@@ -196,7 +196,7 @@ index 1234567..89abcdef 100644
   assert(contextMd !== null && Buffer.byteLength(contextMd, 'utf-8') <= 1200, 'Comment-only PR context.md is compact (<= 1.2KB)');
 
   const filesMd = OutputReader.getFilesSummary(testWs, testRepo, testPr);
-  assert(filesMd !== null && filesMd.includes('# Files') && filesMd.includes('## Read First'), 'OutputReader loads files.md summary list');
+  assert(filesMd !== null && filesMd.includes('# Files') && filesMd.includes('## All files (highest review priority first)'), 'OutputReader loads files.md summary list');
 
   const fileMd = OutputReader.getFileContext(testWs, testRepo, testPr, 'file_0001');
   assert(fileMd !== null && fileMd.includes('# file_0001'), 'OutputReader loads AI file detail files/file_0001.md');
