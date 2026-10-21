@@ -1,7 +1,7 @@
 // PRC1 encrypted file format: round trip, sealed bytes, readable header, wrong key, tampering, truncation, plaintext.
 import assert from 'node:assert/strict';
 import fs from 'fs';
-import { writeSecure, readSecure, readHeader, encryptText, decryptBuffer, PlaintextFileError } from '../src/core/storage/secure-file.ts';
+import { writeSecure, readSecure, readHeader, encryptText, decryptBuffer, PlaintextFileError, copySecureTree } from '../src/core/storage/secure-file.ts';
 import { AccessGate } from '../src/core/auth/access-gate.ts';
 import { purgePlaintext } from '../src/core/storage/purge.ts';
 
@@ -37,6 +37,17 @@ assert.throws(() => decryptBuffer(Buffer.from(header, 'latin1')), /Cannot decryp
 assert.throws(() => decryptBuffer(raw.subarray(0, raw.length - 4)), /Cannot decrypt/);
 assert.throws(() => decryptBuffer(raw.subarray(0, raw.indexOf(0x0a, 5) + 10)), /Cannot decrypt/);
 console.log('  ✓ wrong key, flipped bit, edited header and truncation are all rejected');
+
+const migrationSource = 'ai-context/acme/demo/pr_3/migration-source/revisions/rev_old';
+const migrationDestination = 'ai-context/acme/demo/pr_3/migration-copy/revisions/rev_old';
+fs.mkdirSync(migrationSource, { recursive: true });
+writeSecure(`${migrationSource}/manifest.json`, '{"title":"retained"}', scope);
+const retainedMtime = new Date('2001-01-01T00:00:00.000Z');
+fs.utimesSync(migrationSource, retainedMtime, retainedMtime);
+copySecureTree(migrationSource, migrationDestination, scope);
+assert.equal(readSecure(`${migrationDestination}/manifest.json`), '{"title":"retained"}');
+assert.equal(fs.statSync(migrationDestination).mtimeMs, fs.statSync(migrationSource).mtimeMs, 'cross-volume copies preserve revision age for retention sorting');
+console.log('  ✓ secure migration copies verify content and preserve revision age');
 
 // Pre-encryption files are recognised (callers re-sync them) and purged without a key.
 fs.writeFileSync('ai-context/acme/demo/pr_3/old.json', '{"title":"plaintext"}');

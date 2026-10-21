@@ -59,6 +59,8 @@ Other local state, all git-ignored: `Logs/mcp-server.log` (MCP and launcher log)
 
 The status directory records the state at the last successful sync. Draft is a separate group from open, even though Bitbucket represents both as state `OPEN`; `open` means an open, non-draft PR. There is no `all` directory. `OutputReader` also finds the old status-less layout and legacy roots during migration.
 
+Freshness compares source and target commit hashes from `current.json` and the state and draft flag from the active revision manifest.
+
 ## 4. Write path and atomicity
 
 Every file below is written with `writeSecure` and read with `readSecure` (`src/core/storage/secure-file.ts`): AES-256-GCM with a key derived from the repository UUID, released only by `AccessGate.unlock()` after a live Bitbucket check. Names stay plaintext, content never does. Details: [ENCRYPTION.md](ENCRYPTION.md).
@@ -70,10 +72,10 @@ Every file below is written with `writeSecure` and read with `readSecure` (`src/
 4. Rebuild `files/` aside, then swap it in, so ids from an older, larger revision never linger.
 5. Write `context.md`, `files.md`, `actions.md` and the top-level `manifest.json` (each encrypted, temp file, fsync, rename).
 6. Write **`current.json` last**. It is the commit point.
-7. After this new revision is valid, move the old encrypted PR directory into the status layout, preserving its revision history; if the move fails, leave the old copy for the next successful sync.
+7. After this new revision is valid, migrate retained revision directories from legacy or stale status paths into the canonical status directory. Same-volume moves rename revisions after checking their encrypted files. Across volumes, each file is copied through `readSecure` / `writeSecure` into destination-side staging and compared by decrypted content before publication; revision directory modification times are preserved for retention sorting. A new validated revision replaces an old revision with the same ID. A failed migration or conflicting destination leaves the old directory readable for a later retry.
 8. Prune: keep the active revision and the 4 newest others (`RevisionWriter.KEEP_REVISIONS = 5`).
 
-A crash before publishing `current.json` leaves the previous active revision in place. A crash during status migration leaves the old directory readable. The next successful sync repairs the directory placement.
+A crash before publishing `current.json` leaves the previous active revision in place. A crash during status migration leaves the old directory readable. Because freshness checks include storage placement, the next ordinary successful sync retries migration even when the PR commits, state, and draft flag are unchanged. Old revisions are still subject to the five-revision retention limit.
 
 ## 5. Freshness and concurrency (MCP)
 
@@ -87,7 +89,7 @@ sequenceDiagram
         S->>BB: full collect
     else local revision exists
         S->>BB: GET pullrequest (metadata only)
-        alt source/target commit, state or draft flag changed
+        alt source/target commit, state/draft changed, or migration pending
             S->>BB: full collect
         else unreachable
             S-->>Agent: "Note: could not check…" + cached pack
@@ -97,8 +99,8 @@ sequenceDiagram
 ```
 
 - `PRContextService.sync` keeps one in-flight promise per PR, so parallel calls (refresh or not) share a fetch.
-- File tools never download PR data. Like every tool that reads local data, they first pass the repository access check (`AccessGate.unlock`: one Bitbucket request per repository, cached 60 s), then read the revision at the active status path. `list_synced_prs` lists those revisions by status.
-- `get_pr_comments` and `list_my_open_prs` always fetch live and store nothing: comments change without new commits, so a commit-hash freshness check cannot cover them.
+- File tools and `list_synced_prs` never download PR details. Like every tool that reads local encrypted data, they first pass the repository access check (`AccessGate.unlock`: one Bitbucket request per repository, cached 60 s), then read the active revision or its status metadata. They never migrate directories.
+- `get_pr_comments` and `list_my_open_prs` fetch live data and store nothing. `get_pr_comments` then unlocks the repo to map inline comments to cached file ids. Comments change without new commits, so a commit-hash freshness check cannot cover them.
 - Re-review: when a sync replaces a *different* revision, `DataStore.saveRevision` compares the files against the active revision (by sanitized path and patch content) and stores `changes_since_previous` in the manifest. `context.md` renders it as "Changed since last sync".
 - Transient errors (429/502/503/504) are retried up to twice inside `fetchWithRetry`.
 - Missing credentials or an `ALLOWED_EMAILS` denial fail the call, even when cached data exists.
@@ -109,5 +111,5 @@ sequenceDiagram
 - Under mcp-hub the child's stderr is discarded. The launcher and `Logger` therefore also append to `Logs/mcp-server.log`.
 - The first start on a fresh clone runs `npm ci` and `tsc`, which can take a minute. Run `node bin/cli.js prepare` once before connecting a client.
 - With `AUTO_SYNC_ON_START=true`, the server starts `PRContextService.autoSync()` in the background right after the stdio connection is up. It runs the same code as `sync_my_open_prs` over every `BITBUCKET_REPOSITORY` entry, never blocks tool calls (overlapping PR syncs share one fetch), and logs `auto_sync done total=… synced=… unchanged=… failed=…`. mcp-hub starts children per client session, so this runs once per session.
-- The CLI `sync <mode>` scans all pages for the requested states, filters to PRs authored by the configured account, and writes them into status-specific directories. A pagination interruption is reported as incomplete and produces a failing exit code.
+- The CLI `sync <mode>` scans all pages for the requested states, filters to PRs authored by the configured account, and writes them into status-specific directories. A pagination interruption is reported as incomplete and produces a failing exit code. `open` excludes drafts; `all` combines `open`, `draft`, `merged`, and `declined`. The existing `generate-all` command and `sync_my_open_prs` tool retain their open-only behavior.
 - Batch sync (`sync_my_open_prs`, auto-sync) runs 3 PRs at a time (`p-limit`). An unchanged PR costs one metadata request, and one failing PR is reported in its row without stopping the batch.

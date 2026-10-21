@@ -72,7 +72,7 @@ sequenceDiagram
 
 Plaintext is printed or returned and never written back to disk. `list_synced_prs` lists local revisions by status after unlocking their repositories.
 
-When a PR changes state or draft status, the next successful sync writes and validates the new encrypted revision first, then moves the old encrypted PR directory to the new status path. It does not decrypt or rewrite the old revision files during the move. If migration fails, the old directory remains readable and a later sync can retry.
+When a PR changes state or draft status, the next successful sync writes and validates the new encrypted revision first, then migrates retained revision directories from legacy or stale status paths into the canonical status directory. Same-volume moves rename revision directories after their encrypted files are verified. Across volumes, the writer copies each file through `readSecure` and `writeSecure` into destination-side staging, then compares the decrypted contents before publishing the copy. It preserves revision directory modification times so retention keeps the same history. When the old and new active revisions have the same ID, the freshly validated revision replaces the old copy. The PRC1 format and HKDF info string remain unchanged. A migration failure or destination conflict leaves the source readable. The sync pipeline checks for leftover legacy or status directories even when commits and state are unchanged, so the next ordinary CLI or MCP sync retries migration; an unresolved conflicting history remains available in the source until the destination is repaired. Readers can find history in either location while migration is pending. Historical revisions remain subject to the five-revision retention limit.
 
 ## 6. Limits
 

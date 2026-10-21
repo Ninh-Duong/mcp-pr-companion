@@ -2,6 +2,8 @@ import { BitbucketCollector } from '../bitbucket/bitbucket.collector.js';
 import { AccessGate } from '../auth/access-gate.js';
 import { DataStore } from '../storage/data.store.js';
 import { PRGenerationJobState, GenerationStage } from './generation.types.js';
+import { OutputReader } from '../output/output.reader.js';
+import { getPRStorageStatus } from '../pr-status.js';
 
 export class GenerationJob {
   static async executeJob(
@@ -42,7 +44,8 @@ export class GenerationJob {
         if (head.source === active.current.source_commit &&
           head.destination === active.current.target_commit &&
           head.state.toUpperCase() === active.manifest?.state.toUpperCase() &&
-          head.isDraft === active.manifest?.is_draft) {
+          head.isDraft === active.manifest?.is_draft &&
+          !OutputReader.hasPendingStatusMigration(workspace, repoSlug, prId, getPRStorageStatus(head.state, head.isDraft))) {
           jobState.status = 'cached';
           updateStage('complete', 100);
           return { success: true, isCached: true };
