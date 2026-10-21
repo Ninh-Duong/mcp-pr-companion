@@ -1,6 +1,7 @@
 import { PIISanitizer } from '../privacy/pii.sanitizer.js';
 import { SecretScanner } from '../privacy/secret.scanner.js';
 import { normalizeUuid } from '../auth/current-user.resolver.js';
+import { isPRDraft } from '../pr-status.js';
 
 export interface DiscoveredPR {
   id: number;
@@ -25,14 +26,7 @@ export class PRListNormalizer {
     const destinationCommitHash = rawPr.destination?.commit?.hash;
 
     // Use official API draft field if available
-    let isDraft = false;
-    if (typeof rawPr.draft === 'boolean') {
-      isDraft = rawPr.draft;
-    } else if (typeof rawPr.is_draft === 'boolean') {
-      isDraft = rawPr.is_draft;
-    } else {
-      isDraft = Boolean(rawPr.title?.toLowerCase().includes('[draft]') || rawPr.title?.toLowerCase().startsWith('draft:'));
-    }
+    const isDraft = isPRDraft(rawPr);
 
     const normAuthorUuid = normalizeUuid(rawPr.author?.uuid);
 

@@ -10,7 +10,7 @@ function runContractTests() {
   const sampleManifest = {
     schema_version: '4.0',
     title: 'Feat: Add CRC Controller & comment updates',
-    description: 'Thêm mới controller và cập nhật comment',
+    description: 'Add a controller and update its comments',
     state: 'OPEN',
     is_draft: false,
     source_branch: 'feature/crc',

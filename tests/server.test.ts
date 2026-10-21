@@ -17,6 +17,7 @@ const { createServer } = await import('../src/mcp/tools.ts');
 const { ConfigManager } = await import('../src/config/config.manager.ts');
 const { PRContextService } = await import('../src/mcp/context.service.ts');
 const { AccessGate } = await import('../src/core/auth/access-gate.ts');
+const { DataStore } = await import('../src/core/storage/data.store.ts');
 const { readSecure } = await import('../src/core/storage/secure-file.ts');
 const REPO_UUID = '{7d3c0a52-1111-4222-8333-944455556666}';
 
@@ -28,6 +29,8 @@ const diffText = (n: number) =>
   `diff --git a/${REAL_PATH} b/${REAL_PATH}\nindex 111..222 100644\n--- a/${REAL_PATH}\n+++ b/${REAL_PATH}\n@@ -1,1 +1,${n} @@\n${bigBody}${extraLine}\n`;
 
 let sourceHash = 'aaaaaaaaaaaa';
+let prState = 'OPEN';
+let prDraft = true;
 let userStatus = 200;
 let repoStatus = 200;
 const calls: Record<string, number> = { metadata: 0, diff: 0 };
@@ -46,8 +49,8 @@ globalThis.fetch = (async (input: string | URL) => {
       id: 7,
       title: 'Add invoice export endpoint',
       description: 'Adds a public export API.',
-      state: 'OPEN',
-      draft: true,
+      state: prState,
+      draft: prDraft,
       source: { branch: { name: 'feature/WCE-12-export' }, commit: { hash: sourceHash } },
       destination: { branch: { name: 'main' }, commit: { hash: 'bbbbbbbbbbbb' } }
     });
@@ -59,8 +62,9 @@ globalThis.fetch = (async (input: string | URL) => {
       { id: 2, deleted: true, content: { raw: 'gone' } }
     ] });
   }
-  if (url.includes('/pullrequests?q=')) {
-    return ok({ values: [{ id: 7, title: 'Add invoice export endpoint', state: 'OPEN', author: { uuid: '{u}' }, updated_on: '2026-01-03',
+  if (url.includes('/pullrequests?')) {
+    const state = new URL(url).searchParams.get('state') || 'OPEN';
+    return ok({ values: [{ id: 7, title: 'Add invoice export endpoint', state, draft: prDraft, author: { uuid: '{u}' }, updated_on: '2026-01-03',
       source: { branch: { name: 'feature/WCE-12-export' }, commit: { hash: sourceHash } }, destination: { branch: { name: 'main' }, commit: { hash: 'bbbbbbbbbbbb' } } }] });
   }
   if (url.includes('/commits')) return ok({ values: [{ hash: sourceHash + 'ffff', message: 'WCE-12 export invoices' }] });
@@ -100,6 +104,11 @@ console.log('  ✓ get_pr_context_pack syncs on first use');
 // 3. Read Strategy lists the files to open next (regression: it read a non-existent field)
 assert.match(pack.text, /Read next: .*file_0001/);
 console.log('  ✓ context pack Read Strategy lists next file ids');
+const draftListing = JSON.parse((await call('list_synced_prs', { repository: 'acme/demo-repo', status: 'draft' })).text);
+assert.equal(draftListing.total, 1);
+assert.deepEqual(draftListing.prs.map((pr: any) => [pr.pr_url, pr.id, pr.pr_status]), [[PR_URL, 7, 'draft']]);
+assert.equal(draftListing.next_offset, null);
+console.log('  ✓ list_synced_prs exposes encrypted local PRs by status');
 
 // 4. Unchanged commits: freshness check only, no full re-sync
 await call('get_pr_context_pack', { pr_url: PR_URL });
@@ -143,8 +152,9 @@ assert.ok(!fileCtx.text.includes(REAL_PATH));
 console.log('  ✓ diff headers use the sanitized path');
 
 // 9. Manifest keeps the PR draft flag
-const prDir = path.resolve('ai-context', 'acme', 'acme', 'demo-repo', 'pr_7');
+const prDir = path.resolve('ai-context', 'acme', 'acme', 'demo-repo', 'draft', 'pr_7');
 assert.equal(JSON.parse(readSecure(path.join(prDir, 'manifest.json'))).is_draft, true);
+assert.equal(JSON.parse((await call('get_pr_sync_status', { pr_url: PR_URL })).text).pr_status, 'draft');
 console.log('  ✓ manifest.is_draft comes from Bitbucket');
 
 // 9a. Encrypted at rest: every file starts with PRC1 and leaks neither content nor the key material
@@ -186,6 +196,25 @@ assert.equal(firstPage.comments.length, 1);
 assert.equal(firstPage.next_offset, 1);
 console.log('  ✓ get_pr_comments sanitizes, maps inline comments to file ids and pages');
 
+DataStore.saveRevision('acme', 'demo-repo', 8, {
+  metadata: {
+    id: 8, title: 'Declined local PR', description: '', state: 'DECLINED', draft: false,
+    source: { branch: { name: 'feature/declined' }, commit: { hash: 'eeeeeeeeeeee' } },
+    destination: { branch: { name: 'main' }, commit: { hash: 'ffffffffffff' } }
+  },
+  commits: [], diffstat: [], rawDiff: '', sourceHash: 'eeeeeeeeeeee', destinationHash: 'ffffffffffff',
+  coverage: { metadata: 'complete', commits: 'complete', diffstat: 'complete', diff: 'complete' }, warnings: []
+});
+const syncedPage1 = JSON.parse((await call('list_synced_prs', { repository: 'acme/demo-repo', limit: 1 })).text);
+const syncedPage2 = JSON.parse((await call('list_synced_prs', { repository: 'acme/demo-repo', offset: 1, limit: 1 })).text);
+assert.equal(syncedPage1.total, 2);
+assert.equal(syncedPage1.prs.length, 1);
+assert.equal(syncedPage1.next_offset, 1);
+assert.equal(syncedPage2.prs.length, 1);
+assert.equal(syncedPage2.next_offset, null);
+assert.deepEqual(new Set([...syncedPage1.prs, ...syncedPage2.prs].map((pr: any) => pr.id)), new Set([7, 8]));
+console.log('  ✓ list_synced_prs pages local PRs with next_offset');
+
 // 9c. My open PRs
 const mine = JSON.parse((await call('list_my_open_prs', { repository: 'acme/demo-repo' })).text);
 assert.equal(mine.total, 1);
@@ -218,6 +247,21 @@ delete process.env.BITBUCKET_REPOSITORY;
 assert.equal(calls.diff, before + 1, 'auto-sync re-synced the PR whose commit moved');
 assert.match(fs.readFileSync('Logs/mcp-server.log', 'utf-8'), /auto_sync done total=1 synced=1 unchanged=0 failed=0/);
 console.log('  ✓ sync_my_open_prs reports synced/unchanged with ticket and risk; autoSync syncs moved PRs');
+
+prDraft = false;
+await call('get_pr_context_pack', { pr_url: PR_URL });
+const openDir = path.resolve('ai-context', 'acme', 'acme', 'demo-repo', 'open', 'pr_7');
+assert.equal(JSON.parse(readSecure(path.join(openDir, 'manifest.json'))).is_draft, false);
+assert.equal(fs.existsSync(prDir), false, 'ready PR moved out of the draft directory');
+prState = 'MERGED';
+await call('get_pr_context_pack', { pr_url: PR_URL });
+const mergedDir = path.resolve('ai-context', 'acme', 'acme', 'demo-repo', 'merged', 'pr_7');
+assert.equal(JSON.parse(readSecure(path.join(mergedDir, 'manifest.json'))).state, 'MERGED');
+assert.equal(fs.existsSync(openDir), false, 'merged PR moved out of the open directory');
+assert.equal(JSON.parse((await call('get_pr_sync_status', { pr_url: PR_URL })).text).pr_status, 'merged');
+const mergedListing = JSON.parse((await call('list_synced_prs', { repository: 'acme/demo-repo', status: 'merged' })).text);
+assert.deepEqual(mergedListing.prs.map((pr: any) => pr.pr_status), ['merged']);
+console.log('  ✓ state or draft changes re-sync into the matching status directory');
 
 // 11. Health check: success payload, and a clear error on bad credentials (no PII in either)
 const health = await call('check_bitbucket_connection', {});

@@ -22,8 +22,8 @@ function runGoldenTests() {
         newStart: 10,
         newLines: 8,
         lines: [
-          { type: 'add' as const, content: '        // Thêm chú thích cho constructor CRCController' },
-          { type: 'add' as const, content: '        // Đảm bảo không thay đổi logic code' },
+          { type: 'add' as const, content: '        // Add a comment for the CRCController constructor' },
+          { type: 'add' as const, content: '        // Keep the implementation logic unchanged' },
           { type: 'context' as const, content: '        public CRCController()' }
         ]
       }
@@ -146,13 +146,13 @@ function runGoldenTests() {
   if (emptyDesc.text !== '') throw new Error('Golden 8 failed');
   console.log('  ✅ Golden 8: Empty description PR passed');
 
-  // Golden Fixture 9: Unicode Vietnamese Text Normalization
-  const vnText = 'Tối ưu hoá tính năng \(Controller\) và xử lý dữ liệu Tiếng Việt';
-  const normVn = TextNormalizer.normalize(vnText);
-  if (normVn.text !== 'Tối ưu hoá tính năng (Controller) và xử lý dữ liệu Tiếng Việt') {
-    throw new Error(`Golden 9 failed: expected stripped math escapes, got '${normVn.text}'`);
+  // Golden Fixture 9: Unicode English Text Normalization
+  const unicodeText = 'Improve the résumé \\(Controller\\) and process Unicode data';
+  const normalizedUnicode = TextNormalizer.normalize(unicodeText);
+  if (normalizedUnicode.text !== 'Improve the résumé (Controller) and process Unicode data') {
+    throw new Error(`Golden 9 failed: expected stripped math escapes, got '${normalizedUnicode.text}'`);
   }
-  console.log('  ✅ Golden 9: Unicode Vietnamese text normalization passed');
+  console.log('  ✅ Golden 9: Unicode English text normalization passed');
 
   console.log('🎉 [GOLDEN FIXTURE TEST] All 9 Golden Scenarios Passed Successfully!\n');
 }

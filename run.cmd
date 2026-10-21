@@ -1,7 +1,7 @@
 @echo off
 rem Windows launcher: ensures Node.js >= 20.12 (installs the LTS via winget if missing),
 rem then hands over to bin\cli.js (dependencies, build, .env checks).
-rem Usage: run.cmd [server|cmd|generate-all|purge-plaintext|check|prepare]
+rem Usage: run.cmd [server|cmd|generate-all|sync <mode>|purge-plaintext|check|prepare]
 rem All launcher output goes to stderr: stdout is reserved for the MCP JSON-RPC stream.
 setlocal
 cd /d "%~dp0"

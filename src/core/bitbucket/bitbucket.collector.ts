@@ -1,6 +1,7 @@
 import { BitbucketClient, BitbucketFetchOptions } from './bitbucket.client.js';
 import { RawPRRevision } from './bitbucket.types.js';
 import { ConfigManager } from '../../config/config.manager.js';
+import { isPRDraft } from '../pr-status.js';
 import { AccountPolicy } from '../auth/account-policy.js';
 import { Logger } from '../../utils/logger.js';
 import { SecretScanner } from '../privacy/secret.scanner.js';
@@ -59,9 +60,14 @@ export class BitbucketCollector {
   }
 
   /** One metadata request: the PR's current source and target commit hashes (used to detect stale revisions). */
-  async getHeadCommits(workspace: string, repoSlug: string, prId: number): Promise<{ source: string; destination: string }> {
+  async getHeadCommits(workspace: string, repoSlug: string, prId: number): Promise<{ source: string; destination: string; state: string; isDraft: boolean }> {
     const metadata = await this.client.getPRMetadata(workspace, repoSlug, prId);
-    return { source: metadata.source?.commit?.hash || 'unknown_source', destination: metadata.destination?.commit?.hash || 'unknown_dest' };
+    return {
+      source: metadata.source?.commit?.hash || 'unknown_source',
+      destination: metadata.destination?.commit?.hash || 'unknown_dest',
+      state: metadata.state || 'OPEN',
+      isDraft: isPRDraft(metadata)
+    };
   }
 
   async collect(workspace: string, repoSlug: string, prId: number, options: BitbucketFetchOptions = {}): Promise<RawPRRevision> {

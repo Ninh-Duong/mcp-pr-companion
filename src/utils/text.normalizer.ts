@@ -52,7 +52,7 @@ export class TextNormalizer {
 
   private static cleanPlainText(text: string): string {
     // Strip redundant \( and \) when they are escaped parentheses rather than math expressions
-    // E.g. "thêm mới (CRC)" vs "\(CRC\)"
+    // For example, normalize a parenthesized symbol with or without math escapes.
     let cleaned = text.replace(/\\([()])/g, '$1');
     // Normalize repeated newlines
     cleaned = cleaned.replace(/\r\n/g, '\n');

@@ -1,4 +1,3 @@
-import fs from 'fs';
 import path from 'path';
 import { RawPRRevision } from '../bitbucket/bitbucket.types.js';
 import { ConfigManager } from '../../config/config.manager.js';
@@ -19,6 +18,7 @@ import { PRManifestV4 } from '../output/schema/manifest.v4.schema.js';
 import { FileIndexEntryV4 } from '../output/schema/file_index.v4.schema.js';
 import { FileChangeV4 } from '../output/schema/file_change.v4.schema.js';
 import { PRCoverageV4 } from '../output/schema/coverage.v4.schema.js';
+import { getPRStorageStatus } from '../pr-status.js';
 
 export class DataStore {
   static getActiveRevision(workspace: string, repoSlug: string, prId: number) {
@@ -27,7 +27,7 @@ export class DataStore {
 
   /** Whether a PR has local data, without decrypting anything (no unlock needed). */
   static hasRevision(workspace: string, repoSlug: string, prId: number): boolean {
-    return fs.existsSync(path.join(OutputReader.getPROutputDir(workspace, repoSlug, prId), 'current.json'));
+    return OutputReader.hasPRRevision(workspace, repoSlug, prId);
   }
 
   /**
@@ -45,6 +45,7 @@ export class DataStore {
 
     // 2. Allowlist projection from raw response
     const projectedMeta = BitbucketAllowlistProjector.projectMetadata(rawRev.metadata, privacy.remove_author);
+    const storageStatus = getPRStorageStatus(projectedMeta.state, Boolean(projectedMeta.draft));
     const projectedCommits = BitbucketAllowlistProjector.projectCommits(rawRev.commits, privacy.max_commit_subjects);
     const projectedDiffstat = BitbucketAllowlistProjector.projectDiffstat(rawRev.diffstat);
 
@@ -273,7 +274,9 @@ export class DataStore {
       commitsJsonl,
       coverageData,
       config.ai_context.company,
-      config.ai_context.root
+      config.ai_context.root,
+      storageStatus,
+      OutputReader.getPRDirectories(workspace, repoSlug, prId)
     );
 
     const cacheKey = `bitbucket:${workspace}:${repoSlug}:${prId}:${rawRev.sourceHash.substring(0, 7)}:${rawRev.destinationHash.substring(0, 7)}:v4`;

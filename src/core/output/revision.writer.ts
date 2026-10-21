@@ -10,10 +10,11 @@ import { StorePathResolver } from './store-path.resolver.js';
 import { MarkdownFormatter } from './markdown.formatter.js';
 import { ContextModeClassifier } from '../analyzer/context-mode.classifier.js';
 import { writeSecure, isEncrypted } from '../storage/secure-file.js';
+import { PRStorageStatus } from '../pr-status.js';
 
 export class RevisionWriter {
-  static getPROutputDir(workspace: string, repoSlug: string, prId: number, company?: string, root?: string): string {
-    return StorePathResolver.getBitbucketPRDir(workspace, repoSlug, prId, company, root);
+  static getPROutputDir(workspace: string, repoSlug: string, prId: number, company?: string, root?: string, status?: PRStorageStatus): string {
+    return StorePathResolver.getBitbucketPRDir(workspace, repoSlug, prId, company, root, status);
   }
 
   static writeRevision(
@@ -28,9 +29,11 @@ export class RevisionWriter {
     commitsJsonl: string[],
     coverageData: PRCoverageV4,
     company?: string,
-    root?: string
+    root?: string,
+    status?: PRStorageStatus,
+    previousPrDirs?: string[]
   ): { revisionId: string; manifest: PRManifestV4; prDir: string; revisionDir: string } {
-    const prDir = this.getPROutputDir(workspace, repoSlug, prId, company, root);
+    const prDir = this.getPROutputDir(workspace, repoSlug, prId, company, root, status);
     const shortSrc = sourceHash.substring(0, 7);
     const shortTgt = destinationHash.substring(0, 7);
     const revisionId = `rev_${shortSrc}_${shortTgt}`;
@@ -138,6 +141,9 @@ export class RevisionWriter {
       };
       writeSecure(path.join(prDir, 'current.json'), JSON.stringify(currentData, null, 2), scope);
 
+      for (const previousPrDir of previousPrDirs ?? []) {
+        if (path.resolve(previousPrDir) !== path.resolve(prDir)) this.migratePreviousDirectory(previousPrDir, prDir);
+      }
       this.pruneRevisions(revisionsDir, revisionId);
 
       return {
@@ -157,6 +163,23 @@ export class RevisionWriter {
 
   // ponytail: fixed keep-count by mtime; make it configurable if anyone needs older revisions.
   static readonly KEEP_REVISIONS = 5;
+
+  private static migratePreviousDirectory(previousPrDir: string, prDir: string): void {
+    const previousRevisions = path.join(previousPrDir, 'revisions');
+    const revisionsDir = path.join(prDir, 'revisions');
+    if (!fs.existsSync(previousRevisions)) return;
+    try {
+      for (const entry of fs.readdirSync(previousRevisions, { withFileTypes: true })) {
+        if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+        const previousRevision = path.join(previousRevisions, entry.name);
+        const targetRevision = path.join(revisionsDir, entry.name);
+        if (!fs.existsSync(targetRevision)) fs.renameSync(previousRevision, targetRevision);
+      }
+      fs.rmSync(previousPrDir, { recursive: true, force: true });
+    } catch {
+      // The newly published revision is valid; leave any unmigrated encrypted source data in place.
+    }
+  }
 
   /** Keeps the active revision plus the newest KEEP_REVISIONS - 1 others; always drops unencrypted (pre-encryption) ones. */
   private static pruneRevisions(revisionsDir: string, activeRevision: string): void {

@@ -10,12 +10,12 @@ const { version } = JSON.parse(fs.readFileSync(new URL('../../package.json', imp
 
 export const INSTRUCTIONS = `mcp-pr-companion: read-only, privacy-sanitized context for Bitbucket Cloud pull requests.
 Workflow:
-1. get_pr_context_pack(pr_url) first. It syncs the PR from Bitbucket when there is no local copy or the PR has new commits, then returns a compact Markdown summary with a Read Strategy listing the file ids worth opening.
+1. get_pr_context_pack(pr_url) first. It syncs the PR from Bitbucket when there is no local copy or its commits, state or draft flag changed, then returns a compact Markdown summary with a Read Strategy listing the file ids worth opening.
 2. search_pr_files(pr_url, filters) to list file ids by path, language, status, change_kind or risk_tag.
 3. get_pr_file_context(pr_url, file_id) for one file's summary and diff, or get_pr_file_changes(pr_url, file_id) for classification, risk evidence and symbols as JSON.
 4. get_pr_comments(pr_url) for review feedback (include_resolved=false for open threads only).
 Re-review: the pack's "Changed since last sync" section lists the only file ids that changed; open just those.
-No PR URL? list_my_open_prs lists the account's open PRs. "Sync all my PRs" = sync_my_open_prs(repository), then show its prs as a table.
+No PR URL? list_my_open_prs lists the account's open PRs; list_synced_prs lists cached PRs by state. "Sync all my open PRs" = sync_my_open_prs(repository), then show its prs as a table.
 The local cache is encrypted: never read ai-context/ files directly. "No access: …" means the Bitbucket check failed; tell the user.
 Long text is paged: when next_offset is not null (or the text ends with "continue with offset N"), call again with that offset.
 File paths are sanitized by design; filter on what search_pr_files returns. Tools never write to Bitbucket.
@@ -53,7 +53,7 @@ export function createServer(): McpServer {
     {
       title: 'PR context pack',
       description:
-        'START HERE. Returns the Markdown context pack for a Bitbucket PR: overview, change summary, description, commits and a Read Strategy naming the files to open next. Syncs from Bitbucket automatically when the PR is not cached or has new commits.',
+        'START HERE. Returns the Markdown context pack for a Bitbucket PR: overview, change summary, description, commits and a Read Strategy naming the files to open next. Syncs from Bitbucket when the PR is not cached or its commits, state, or draft flag changed.',
       inputSchema: {
         pr_url: prUrl,
         refresh: z.boolean().default(false).describe('Force a full re-sync even if the cached revision looks current.'),
@@ -133,6 +133,23 @@ export function createServer(): McpServer {
   );
 
   server.registerTool(
+    'list_synced_prs',
+    {
+      title: 'List synced PRs',
+      description:
+        'Lists locally synced PRs after unlocking each repository with a live Bitbucket check. Optional status filters open, draft, merged or declined PRs. Returns paged JSON {total, prs:[{pr_url, repository, id, title, pr_status, updated_at}], next_offset}.',
+      inputSchema: {
+        repository: z.string().optional().describe('"workspace/repo"; omit to use BITBUCKET_REPOSITORY.'),
+        status: z.enum(['open', 'draft', 'merged', 'declined']).optional(),
+        offset: z.number().int().min(0).default(0),
+        limit: z.number().int().min(1).max(200).default(50)
+      },
+      annotations: LOCAL_READ
+    },
+    ({ repository, status, offset, limit }) => run('list_synced_prs', async () => json(await PRContextService.listSyncedPRs(repository, status, offset, limit)))
+  );
+
+  server.registerTool(
     'list_my_open_prs',
     {
       title: 'My open PRs',
@@ -151,7 +168,7 @@ export function createServer(): McpServer {
     {
       title: 'Sync my open PRs',
       description:
-        'Syncs every open PR authored by the configured account in one repository (or every BITBUCKET_REPOSITORY entry) into the encrypted local cache, skipping PRs without new commits unless force. Returns JSON {total, synced, unchanged, failed, prs:[{pr_url, id, title, status, ticket, overall_risk, files_changed, updated_on, error?}]}: show it to the user as a table.',
+        'Syncs every open PR authored by the configured account in one repository (or every BITBUCKET_REPOSITORY entry) into the encrypted local cache, skipping PRs whose commits, state, and draft flag match unless force. Returns JSON {total, synced, unchanged, failed, prs:[{pr_url, id, title, status, ticket, overall_risk, files_changed, updated_on, error?}]}: show it to the user as a table.',
       inputSchema: {
         repository: z.string().optional().describe('"workspace/repo"; omit to use BITBUCKET_REPOSITORY.'),
         force: z.boolean().default(false).describe('Re-sync every PR even if its commits did not move.')
@@ -182,7 +199,7 @@ export function createServer(): McpServer {
     'get_pr_sync_status',
     {
       title: 'PR sync status',
-      description: 'Whether a PR is cached locally, its revision, sync time, source/target commits and stats. Does not fetch the PR (only the access check that unlocks the encrypted cache).',
+      description: 'Whether a PR is cached locally, its revision, PR status, sync time, source/target commits and stats. Does not fetch the PR (only the access check that unlocks the encrypted cache).',
       inputSchema: { pr_url: prUrl },
       annotations: LOCAL_READ
     },

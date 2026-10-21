@@ -43,7 +43,7 @@ try {
 
   send({ id: 2, method: 'tools/list' });
   const names = (await waitFor(2)).result.tools.map((t: any) => t.name).sort();
-  assert.deepEqual(names, ['check_bitbucket_connection', 'get_pr_comments', 'get_pr_context_pack', 'get_pr_file_changes', 'get_pr_file_context', 'get_pr_sync_status', 'list_my_open_prs', 'search_pr_files', 'sync_my_open_prs']);
+  assert.deepEqual(names, ['check_bitbucket_connection', 'get_pr_comments', 'get_pr_context_pack', 'get_pr_file_changes', 'get_pr_file_context', 'get_pr_sync_status', 'list_my_open_prs', 'list_synced_prs', 'search_pr_files', 'sync_my_open_prs']);
 
   for (const line of lines) assert.equal(JSON.parse(line).jsonrpc, '2.0');
   console.log(`  ✓ stdio: initialize + tools/list OK, ${lines.length} stdout lines are all JSON-RPC`);

@@ -7,7 +7,7 @@
 // Only Node built-ins are used so this runs on a fresh clone. Every message goes to stderr:
 // stdout belongs to the MCP JSON-RPC stream when running the server.
 //
-// Usage: node bin/cli.js [server|cmd|generate-all|purge-plaintext|check|prepare]   (default: server)
+// Usage: node bin/cli.js [server|cmd|generate-all|sync <mode>|purge-plaintext|check|prepare]   (default: server)
 import { spawn, spawnSync } from 'child_process';
 import crypto from 'crypto';
 import fs from 'fs';
@@ -21,6 +21,7 @@ const ENTRIES = {
   server: 'dist/mcp/server.js',
   cmd: 'dist/cmd/cmd.runner.js',
   'generate-all': 'dist/cmd/generate-all.runner.js',
+  sync: 'dist/cmd/sync.runner.js',
   'purge-plaintext': 'dist/cmd/purge-plaintext.runner.js'
 };
 const CREDENTIALS = ['BITBUCKET_EMAIL', 'BITBUCKET_API_TOKEN'];
@@ -28,6 +29,7 @@ const REQUIRED_ENV = {
   server: CREDENTIALS,
   cmd: [...CREDENTIALS, 'BITBUCKET_REPOSITORY'],
   'generate-all': [...CREDENTIALS, 'BITBUCKET_REPOSITORY'],
+  sync: [...CREDENTIALS, 'BITBUCKET_REPOSITORY'],
   check: [...CREDENTIALS, 'BITBUCKET_REPOSITORY']
 };
 
@@ -140,6 +142,10 @@ const command = process.argv[2] || 'server';
 const known = [...Object.keys(ENTRIES), 'check', 'prepare'];
 if (!known.includes(command)) {
   log(`Unknown command "${command}". Use one of: ${known.join(', ')}`);
+  process.exit(1);
+}
+if (command === 'sync' && !['open', 'draft', 'merged', 'declined', 'all'].includes(process.argv[3] || '')) {
+  log('Usage: node bin/cli.js sync <open|draft|merged|declined|all>');
   process.exit(1);
 }
 

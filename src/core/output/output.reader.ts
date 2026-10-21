@@ -7,8 +7,10 @@ import { RevisionWriter } from './revision.writer.js';
 import { StorePathResolver } from './store-path.resolver.js';
 import { ConfigManager } from '../../config/config.manager.js';
 import { readSecure, PlaintextFileError } from '../storage/secure-file.js';
+import { PRStorageStatus, PR_STORAGE_STATUSES } from '../pr-status.js';
 
 export interface ActiveRevisionResult {
+  prDir: string;
   current: {
     active_revision: string;
     updated_at?: string;
@@ -59,44 +61,65 @@ export class OutputReader {
     repoSlug: string,
     prId: number,
     company?: string,
-    root?: string
+    root?: string,
+    status?: PRStorageStatus
   ): string {
     const configured = company !== undefined || root !== undefined
       ? { company, root }
       : this.getConfiguredPathOptions();
 
-    const primaryDir = RevisionWriter.getPROutputDir(
+    if (status) return RevisionWriter.getPROutputDir(workspace, repoSlug, prId, configured.company, configured.root, status);
+    return this.getActiveRevision(workspace, repoSlug, prId)?.prDir ?? RevisionWriter.getPROutputDir(
       workspace,
       repoSlug,
       prId,
       configured.company,
       configured.root
     );
-    if (fs.existsSync(primaryDir)) {
-      return primaryDir;
-    }
+  }
 
-    if (configured.company) {
-      const companylessDir = RevisionWriter.getPROutputDir(workspace, repoSlug, prId, undefined, configured.root);
-      if (fs.existsSync(companylessDir)) {
-        return companylessDir;
+  private static locationOptions(): Array<{ company?: string; root?: string }> {
+    const configured = this.getConfiguredPathOptions();
+    const options = [configured];
+    if (configured.company) options.push({ root: configured.root });
+    if (configured.root && configured.root !== StorePathResolver.DEFAULT_ROOT) options.push({ root: StorePathResolver.DEFAULT_ROOT });
+    return options.filter((value, index, all) => all.findIndex(other => other.company === value.company && other.root === value.root) === index);
+  }
+
+  static getPRDirectories(workspace: string, repoSlug: string, prId: number): string[] {
+    return this.locationOptions().flatMap(({ company, root }) =>
+      StorePathResolver.getBitbucketPRDirs(workspace, repoSlug, prId, company, root)
+    );
+  }
+
+  static getRepositoryDirectories(workspace: string, repoSlug: string): string[] {
+    return this.locationOptions().map(({ company, root }) =>
+      StorePathResolver.getBitbucketRepositoryDir(workspace, repoSlug, company, root)
+    );
+  }
+
+  static hasPRRevision(workspace: string, repoSlug: string, prId: number): boolean {
+    return this.getPRDirectories(workspace, repoSlug, prId).some(dir => fs.existsSync(path.join(dir, 'current.json')));
+  }
+
+  static listPRIds(workspace: string, repoSlug: string): number[] {
+    const ids = new Set<number>();
+    for (const repositoryDir of this.getRepositoryDirectories(workspace, repoSlug)) {
+      if (!fs.existsSync(repositoryDir)) continue;
+      for (const status of PR_STORAGE_STATUSES) {
+        const statusDir = path.join(repositoryDir, status);
+        if (!fs.existsSync(statusDir)) continue;
+        for (const name of fs.readdirSync(statusDir)) {
+          const match = /^pr_(\d+)$/.exec(name);
+          if (match) ids.add(Number(match[1]));
+        }
+      }
+      for (const name of fs.readdirSync(repositoryDir)) {
+        const match = /^pr_(\d+)$/.exec(name);
+        if (match) ids.add(Number(match[1]));
       }
     }
-
-    if (configured.root && configured.root !== StorePathResolver.DEFAULT_ROOT) {
-      const defaultRootDir = RevisionWriter.getPROutputDir(
-        workspace,
-        repoSlug,
-        prId,
-        undefined,
-        StorePathResolver.DEFAULT_ROOT
-      );
-      if (fs.existsSync(defaultRootDir)) {
-        return defaultRootDir;
-      }
-    }
-
-    return primaryDir;
+    return [...ids].sort((a, b) => b - a);
   }
 
   static getActiveRevision(
@@ -104,21 +127,25 @@ export class OutputReader {
     repoSlug: string,
     prId: number
   ): ActiveRevisionResult | null {
-    const prDir = this.getPROutputDir(workspace, repoSlug, prId);
-    const currentPath = path.join(prDir, 'current.json');
-
-    const current = this.readJson<ActiveRevisionResult['current']>(currentPath);
-    if (!current) return null;
-    const manifest = this.getManifest(workspace, repoSlug, prId, current.active_revision);
-    return manifest ? { current, manifest } : null;
+    const matches = this.getPRDirectories(workspace, repoSlug, prId).flatMap((prDir, index) => {
+      const current = this.readJson<ActiveRevisionResult['current']>(path.join(prDir, 'current.json'));
+      if (!current) return [];
+      const manifest = this.readJson<PRManifestV4>(path.join(prDir, 'revisions', current.active_revision, 'manifest.json'));
+      return manifest ? [{ prDir, current, manifest, index }] : [];
+    });
+    matches.sort((a, b) => Date.parse(b.current.updated_at || '') - Date.parse(a.current.updated_at || '') || a.index - b.index);
+    const active = matches[0];
+    return active ? { prDir: active.prDir, current: active.current, manifest: active.manifest } : null;
   }
 
   private static resolveRevisionDir(workspace: string, repoSlug: string, prId: number, revisionId?: string): string | null {
-    const prDir = this.getPROutputDir(workspace, repoSlug, prId);
+    const active = this.getActiveRevision(workspace, repoSlug, prId);
+    const directories = revisionId
+      ? this.getPRDirectories(workspace, repoSlug, prId)
+      : active ? [active.prDir] : [];
     let targetRev = revisionId;
 
     if (!targetRev) {
-      const active = this.getActiveRevision(workspace, repoSlug, prId);
       targetRev = active?.current?.active_revision;
     }
 
@@ -126,8 +153,11 @@ export class OutputReader {
       return null;
     }
 
-    const revDir = path.join(prDir, 'revisions', targetRev);
-    return fs.existsSync(revDir) ? revDir : null;
+    for (const prDir of directories) {
+      const revDir = path.join(prDir, 'revisions', targetRev);
+      if (fs.existsSync(revDir)) return revDir;
+    }
+    return null;
   }
 
   static getManifest(workspace: string, repoSlug: string, prId: number, revisionId?: string): PRManifestV4 | null {
@@ -138,13 +168,13 @@ export class OutputReader {
   }
 
   static getContextPack(workspace: string, repoSlug: string, prId: number): string | null {
-    const prDir = this.getPROutputDir(workspace, repoSlug, prId);
-    return this.readText(path.join(prDir, 'context.md'));
+    const active = this.getActiveRevision(workspace, repoSlug, prId);
+    return active ? this.readText(path.join(active.prDir, 'context.md')) : null;
   }
 
   static getFilesSummary(workspace: string, repoSlug: string, prId: number): string | null {
-    const prDir = this.getPROutputDir(workspace, repoSlug, prId);
-    return this.readText(path.join(prDir, 'files.md'));
+    const active = this.getActiveRevision(workspace, repoSlug, prId);
+    return active ? this.readText(path.join(active.prDir, 'files.md')) : null;
   }
 
   /**
@@ -159,10 +189,10 @@ export class OutputReader {
   }
 
   static getFileContext(workspace: string, repoSlug: string, prId: number, fileId: string | number): string | null {
-    const prDir = this.getPROutputDir(workspace, repoSlug, prId);
+    const active = this.getActiveRevision(workspace, repoSlug, prId);
+    if (!active) return null;
     const normalizedId = this.normalizeFileId(fileId);
-
-    return this.readText(path.join(prDir, 'files', `${normalizedId}.md`));
+    return this.readText(path.join(active.prDir, 'files', `${normalizedId}.md`));
   }
 
   static getFileIndex(workspace: string, repoSlug: string, prId: number, revisionId?: string): FileIndexEntryV4[] {

@@ -1,9 +1,8 @@
-import fs from 'fs';
-import path from 'path';
 import { select } from '@inquirer/prompts';
 import { runtimeSession } from '../core/auth/runtime-session.js';
 import { AccessGate } from '../core/auth/access-gate.js';
 import { OutputReader } from '../core/output/output.reader.js';
+import { getPRStorageStatus } from '../core/pr-status.js';
 
 /**
  * Shows decrypted context for PRs already synced into ai-context/. Reached only after login, and
@@ -24,11 +23,7 @@ export class ContextViewerScreen {
       return;
     }
 
-    const repoDir = path.dirname(OutputReader.getPROutputDir(workspace, repoSlug, 0));
-    const prIds = fs.existsSync(repoDir)
-      ? fs.readdirSync(repoDir).map(n => /^pr_(\d+)$/.exec(n)?.[1]).filter(Boolean).map(Number).sort((a, b) => b - a)
-      : [];
-    const prs = prIds
+    const prs = OutputReader.listPRIds(workspace, repoSlug)
       .map(id => ({ id, manifest: OutputReader.getActiveRevision(workspace, repoSlug, id)?.manifest }))
       .filter(p => p.manifest);
 
@@ -42,7 +37,7 @@ export class ContextViewerScreen {
       const prId = await select({
         message: `Synced PRs in ${workspace}/${repoSlug}:`,
         choices: [
-          ...prs.map(p => ({ name: `#${p.id}  ${p.manifest!.title}`, value: p.id })),
+          ...prs.map(p => ({ name: `#${p.id}  [${getPRStorageStatus(p.manifest!.state, p.manifest!.is_draft)}] ${p.manifest!.title}`, value: p.id })),
           { name: '⬅️ Back', value: -1 }
         ]
       });

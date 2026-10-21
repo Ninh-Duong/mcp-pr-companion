@@ -46,10 +46,13 @@ export class BitbucketClient {
     return this.fetchJson('https://api.bitbucket.org/2.0/user', options);
   }
 
-  /** Every page of a pull request listing (q is a Bitbucket query, e.g. state="OPEN"), newest first. */
-  async listPullRequests(workspace: string, repoSlug: string, q: string, options: BitbucketFetchOptions = {}): Promise<PaginatedResult<any>> {
-    const url = `https://api.bitbucket.org/2.0/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/pullrequests?q=${encodeURIComponent(q)}&sort=-updated_on&pagelen=50`;
-    return PaginationHelper.fetchAllPages(url, this.headers, { ...options, maxPages: 10 });
+  /** Every page of a pull request listing, newest first. */
+  async listPullRequests(workspace: string, repoSlug: string, q: string, state?: string, options: BitbucketFetchOptions = {}): Promise<PaginatedResult<any>> {
+    const params = new URLSearchParams({ sort: '-updated_on', pagelen: '50' });
+    if (q) params.set('q', q);
+    if (state) params.set('state', state);
+    const url = `https://api.bitbucket.org/2.0/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/pullrequests?${params}`;
+    return PaginationHelper.fetchAllPages(url, this.headers, { ...options, maxPages: Infinity });
   }
 
   async getPRDiffText(workspace: string, repoSlug: string, prId: number, options: BitbucketFetchOptions = {}): Promise<string> {
