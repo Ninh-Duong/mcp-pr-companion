@@ -10,7 +10,7 @@ export class BitbucketCollector {
   private client: BitbucketClient;
 
   /**
-   * Without explicit credentials (MCP server path), use BITBUCKET_EMAIL / BITBUCKET_API_TOKEN from .env
+   * Without explicit credentials (MCP server path), use BITBUCKET_EMAIL / BITBUCKET_API_TOKEN from .env or the Hub's bitbucket block
    * and enforce ALLOWED_EMAILS here (the CLI enforces it at login).
    */
   constructor(email?: string, token?: string) {
@@ -19,11 +19,11 @@ export class BitbucketCollector {
       email = email || creds.email;
       token = token || creds.token;
       if (!AccountPolicy.isEmailAllowed(email)) {
-        throw new Error('Access denied. BITBUCKET_EMAIL is not listed in ALLOWED_EMAILS (.env).');
+        throw new Error(`Access denied. BITBUCKET_EMAIL is not listed in ALLOWED_EMAILS (.env or the Hub's bitbucket block).`);
       }
     }
     if (!token) {
-      throw new Error('No Bitbucket credentials: set BITBUCKET_EMAIL and BITBUCKET_API_TOKEN in .env.');
+      throw new Error(`No Bitbucket credentials: set BITBUCKET_EMAIL and BITBUCKET_API_TOKEN in .env or the Hub's bitbucket block.`);
     }
     this.client = new BitbucketClient(email, token);
   }
@@ -33,7 +33,7 @@ export class BitbucketCollector {
     try {
       return await this.client.getCurrentUser();
     } catch (err: any) {
-      if (err.status === 401) throw new Error('Bitbucket rejected the credentials (HTTP 401): check BITBUCKET_EMAIL / BITBUCKET_API_TOKEN in .env.');
+      if (err.status === 401) throw new Error(`Bitbucket rejected the credentials (HTTP 401): check BITBUCKET_EMAIL / BITBUCKET_API_TOKEN in .env or the Hub's bitbucket block.`);
       if (err.status === 403) throw new Error('Bitbucket token lacks the read:user scope (HTTP 403).');
       throw new Error(`Bitbucket is unreachable: ${SecretScanner.scanAndRedact(err.message || String(err))}`);
     }
@@ -49,7 +49,7 @@ export class BitbucketCollector {
     try {
       return String((await this.client.getRepository(workspace, repoSlug)).uuid || '');
     } catch (err: any) {
-      if (err.status === 401) throw new Error('No access: Bitbucket rejected the credentials (HTTP 401): check BITBUCKET_EMAIL / BITBUCKET_API_TOKEN in .env.');
+      if (err.status === 401) throw new Error(`No access: Bitbucket rejected the credentials (HTTP 401): check BITBUCKET_EMAIL / BITBUCKET_API_TOKEN in .env or the Hub's bitbucket block.`);
       if (err.status === 403 || err.status === 404) throw new Error(`No access: this account cannot read ${workspace}/${repoSlug} (HTTP ${err.status}).`);
       throw new Error(`No access: cannot connect to Bitbucket (${SecretScanner.scanAndRedact(err.message || String(err))}).`);
     }

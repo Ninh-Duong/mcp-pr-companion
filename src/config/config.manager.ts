@@ -7,9 +7,19 @@ export interface EnvCredentials {
   repositories: string[];
 }
 
+/** Where a value came from: process env, the Hub's "bitbucket" block, the local .env, or nowhere. */
+export type ConfigSource = 'env' | 'hub' | 'local' | 'unset';
+export interface ConfigSources {
+  credentials: ConfigSource;
+  workspace: ConfigSource;
+  repository: ConfigSource;
+  allowed_emails: ConfigSource;
+}
+const SOURCES: readonly string[] = ['env', 'hub', 'local', 'unset'];
+
 /**
- * All configuration comes from environment variables (loaded from .env by bin/cli.js).
- * See .env.example for the full list.
+ * All configuration comes from environment variables. bin/cli.js fills unset ones from the Hub's
+ * "bitbucket" block (CENTRAL_CONFIG_PATH), then from .env. See .env.example for the full list.
  */
 export class ConfigManager {
   private static cached: BaseConfig | null = null;
@@ -33,6 +43,30 @@ export class ConfigManager {
       }
     });
     return this.cached;
+  }
+
+  /**
+   * Source of each value group, from PR_COMPANION_CONFIG_SOURCES (set by bin/cli.js). Names only, never values.
+   * credentials = the source of BITBUCKET_API_TOKEN. Without the launcher (e.g. tests), a set value counts as local.
+   */
+  static sources(): ConfigSources {
+    let given: Record<string, unknown> = {};
+    try {
+      given = JSON.parse(process.env.PR_COMPANION_CONFIG_SOURCES || '{}');
+    } catch {
+      // Malformed: fall back to local/unset below.
+    }
+    const of = (key: string): ConfigSource => {
+      const value = given?.[key];
+      if (typeof value === 'string' && SOURCES.includes(value)) return value as ConfigSource;
+      return (process.env[key] || '').trim() ? 'local' : 'unset';
+    };
+    return {
+      credentials: of('BITBUCKET_API_TOKEN'),
+      workspace: of('BITBUCKET_WORKSPACE'),
+      repository: of('BITBUCKET_REPOSITORY'),
+      allowed_emails: of('ALLOWED_EMAILS')
+    };
   }
 
   /**

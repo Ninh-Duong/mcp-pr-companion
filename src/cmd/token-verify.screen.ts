@@ -35,7 +35,7 @@ export class TokenVerifyScreen {
     }
 
     console.log(`[✗] API token failed verification: ${probe.failedStage?.message || 'Missing required scopes'}`);
-    console.log('Fix BITBUCKET_API_TOKEN in .env (read-only scopes above) and run again.\n');
+    console.log(`Fix BITBUCKET_API_TOKEN in .env or the Hub's bitbucket block (read-only scopes above) and run again.\n`);
     return 'failed';
   }
 }

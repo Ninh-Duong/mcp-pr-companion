@@ -304,7 +304,7 @@ export class PRContextService {
     const collector = new BitbucketCollector(); // credentials + ALLOWED_EMAILS
     const { email, token, repositories } = ConfigManager.credentials();
     const targets = repository ? [repository] : repositories;
-    if (targets.length === 0) throw new Error('No repository: pass repository ("workspace/repo") or set BITBUCKET_REPOSITORY in .env.');
+    if (targets.length === 0) throw new Error(`No repository: pass repository ("workspace/repo") or set BITBUCKET_REPOSITORY in .env or the Hub's bitbucket block.`);
     if (targets.some(r => !/^[\w.-]+\/[\w.-]+$/.test(r) || r.split('/').some(s => /^\.+$/.test(s)))) throw new Error('repository must look like "workspace/repo".');
 
     const me = await collector.currentUserUuid();
@@ -331,7 +331,7 @@ export class PRContextService {
   static async listSyncedPRs(repository?: string, status?: PRStorageStatus, offset = 0, limit = 50) {
     const { repositories } = ConfigManager.credentials();
     const targets = repository ? [repository] : repositories;
-    if (targets.length === 0) throw new Error('No repository: pass repository ("workspace/repo") or set BITBUCKET_REPOSITORY in .env.');
+    if (targets.length === 0) throw new Error(`No repository: pass repository ("workspace/repo") or set BITBUCKET_REPOSITORY in .env or the Hub's bitbucket block.`);
     if (targets.some(r => !/^[\w.-]+\/[\w.-]+$/.test(r) || r.split('/').some(s => /^\.+$/.test(s)))) throw new Error('repository must look like "workspace/repo".');
 
     const prs = [];

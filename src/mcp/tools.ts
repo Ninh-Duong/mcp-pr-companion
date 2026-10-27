@@ -5,6 +5,7 @@ import { PRContextService, Page } from './context.service.js';
 import { Logger } from '../utils/logger.js';
 import { SecretScanner } from '../core/privacy/secret.scanner.js';
 import { BitbucketCollector } from '../core/bitbucket/bitbucket.collector.js';
+import { ConfigManager } from '../config/config.manager.js';
 
 const { version } = JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf-8'));
 
@@ -180,14 +181,14 @@ export function createServer(): McpServer {
     {
       title: 'Check Bitbucket connection',
       description:
-        'Health check: verifies that the configured Bitbucket credentials authenticate (and pass ALLOWED_EMAILS) with one read-only request. Returns JSON {connected: true}; failures are errors. Changes nothing.',
+        'Health check: verifies that the configured Bitbucket credentials authenticate (and pass ALLOWED_EMAILS) with one read-only request. Returns JSON {connected: true, config_source} (config_source names where credentials, workspace, repository and allowed_emails came from: env, hub, local or unset); failures are errors. Changes nothing.',
       inputSchema: {},
       annotations: { readOnlyHint: true, openWorldHint: true }
     },
     () =>
       run('check_bitbucket_connection', async () => {
         await new BitbucketCollector().checkConnection();
-        return json({ connected: true });
+        return json({ connected: true, config_source: ConfigManager.sources() });
       })
   );
 

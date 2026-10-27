@@ -3,7 +3,8 @@
 //   1. Node.js satisfies package.json "engines"
 //   2. node_modules matches package-lock.json   (otherwise: npm ci)
 //   3. dist/ matches the current sources        (otherwise: npm run build)
-//   4. .env provides the required settings       (otherwise: create it from .env.example and stop)
+//   4. the required settings are present         (otherwise: create .env from .env.example and stop)
+//      Priority per value: process env > the Hub's "bitbucket" block (CENTRAL_CONFIG_PATH) > .env; empty = unset.
 // Only Node built-ins are used so this runs on a fresh clone. Every message goes to stderr:
 // stdout belongs to the MCP JSON-RPC stream when running the server.
 //
@@ -37,6 +38,14 @@ const LOCK_STAMP = path.join(root, 'node_modules', '.mcp-pr-lock.sha256');
 const BUILD_STAMP = path.join(root, 'dist', '.build-stamp');
 const ENV_FILE = path.join(root, '.env');
 const ENV_EXAMPLE = path.join(root, '.env.example');
+// The Hub's "bitbucket" block (CENTRAL_CONFIG_PATH) → env var it fills.
+const HUB_KEYS = {
+  email: 'BITBUCKET_EMAIL',
+  api_token: 'BITBUCKET_API_TOKEN',
+  workspace: 'BITBUCKET_WORKSPACE',
+  repository: 'BITBUCKET_REPOSITORY',
+  allowed_emails: 'ALLOWED_EMAILS'
+};
 
 // Also appended to Logs/mcp-server.log: mcp-hub discards a child's stderr, so startup failures
 // (missing .env, failed build) would otherwise be invisible.
@@ -97,14 +106,56 @@ function checkBuild() {
   return { ok, detail: ok ? 'dist/ is up to date' : 'dist/ missing or older than src/' };
 }
 
-// Real environment variables win over .env (process.loadEnvFile never overrides them).
-function checkEnv(command) {
+const isSet = key => (process.env[key] || '').trim() !== '';
+
+// mcp-hub passes CENTRAL_CONFIG_PATH (relative paths resolve against this repo, not the cwd).
+// A missing or broken file is a warning: .env still applies. The file is never written.
+function readHubSection() {
+  const file = process.env.CENTRAL_CONFIG_PATH;
+  if (!file) return {};
+  try {
+    const section = JSON.parse(fs.readFileSync(path.resolve(root, file), 'utf-8')).bitbucket;
+    if (section && typeof section === 'object') return section;
+    log('Warning: the Hub config has no "bitbucket" block; using .env.');
+  } catch (err) {
+    log(`Warning: cannot read the Hub config (CENTRAL_CONFIG_PATH): ${err.code || err.name}; using .env.`);
+  }
+  return {};
+}
+
+// Fills unset values: process env > Hub "bitbucket" block > .env (process.loadEnvFile never overrides).
+// Records each HUB_KEYS source (env | hub | local | unset) in PR_COMPANION_CONFIG_SOURCES for the server.
+let sources;
+function loadConfig() {
+  if (sources) return sources;
+  sources = {};
+  const hub = readHubSection();
+  for (const [field, key] of Object.entries(HUB_KEYS)) {
+    if (isSet(key)) { sources[key] = 'env'; continue; }
+    delete process.env[key]; // empty = unset, so the Hub or .env can fill it
+    const value = Array.isArray(hub[field]) ? hub[field].join(',') : hub[field];
+    if (typeof value === 'string' && value.trim()) {
+      process.env[key] = value.trim();
+      sources[key] = 'hub';
+    }
+  }
   if (fs.existsSync(ENV_FILE)) process.loadEnvFile(ENV_FILE);
-  const missing = (REQUIRED_ENV[command] || []).filter(k => !(process.env[k] || '').trim());
+  for (const key of Object.values(HUB_KEYS)) sources[key] ??= isSet(key) ? 'local' : 'unset';
+  process.env.PR_COMPANION_CONFIG_SOURCES = JSON.stringify(sources);
+  return sources;
+}
+
+// Same grouping as ConfigManager.sources(): credentials report the token's source.
+const describeSources = s =>
+  `credentials: ${s.BITBUCKET_API_TOKEN}, workspace: ${s.BITBUCKET_WORKSPACE}, repository: ${s.BITBUCKET_REPOSITORY}, allowed_emails: ${s.ALLOWED_EMAILS}`;
+
+function checkEnv(command) {
+  const s = loadConfig();
+  const missing = (REQUIRED_ENV[command] || []).filter(k => !isSet(k));
   return {
     ok: missing.length === 0,
     missing,
-    detail: missing.length === 0 ? 'required settings present' : `missing in .env: ${missing.join(', ')}`
+    detail: `${missing.length === 0 ? 'required settings present' : `missing: ${missing.join(', ')}`} (${describeSources(s)})`
   };
 }
 
@@ -133,7 +184,7 @@ function ensureEnv(command) {
     fs.copyFileSync(ENV_EXAMPLE, ENV_FILE);
     log(`Created ${ENV_FILE} from .env.example.`);
   }
-  throw new Error(`Fill in ${env.missing.join(', ')} in ${ENV_FILE} and run again.`);
+  throw new Error(`Fill in ${env.missing.join(', ')} in ${ENV_FILE} or the Hub's bitbucket block and run again.`);
 }
 
 // ---- main --------------------------------------------------------------------------------
@@ -156,7 +207,7 @@ if (!node.ok) {
 }
 
 if (command === 'check') {
-  const results = [['Node.js', node], ['Dependencies', checkDeps()], ['Build', checkBuild()], ['Config (.env)', checkEnv('check')]];
+  const results = [['Node.js', node], ['Dependencies', checkDeps()], ['Build', checkBuild()], ['Config', checkEnv('check')]];
   for (const [name, r] of results) log(`${r.ok ? '✓' : '✗'} ${name}: ${r.detail}`);
   process.exit(results.every(([, r]) => r.ok) ? 0 : 1);
 }

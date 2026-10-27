@@ -12,6 +12,7 @@ process.env.AI_CONTEXT_COMPANY = 'acme';
 process.env.PRIVACY_FILE_PATH_MODE = 'sanitized';
 delete process.env.BITBUCKET_REPOSITORY;
 delete process.env.ALLOWED_EMAILS;
+delete process.env.PR_COMPANION_CONFIG_SOURCES;
 
 const { createServer } = await import('../src/mcp/tools.ts');
 const { ConfigManager } = await import('../src/config/config.manager.ts');
@@ -446,7 +447,20 @@ console.log('  ✓ MCP and CLI sync retry interrupted migration, preserve encryp
 // 11. Health check: success payload, and a clear error on bad credentials (no PII in either)
 const health = await call('check_bitbucket_connection', {});
 assert.ok(!health.isError);
-assert.deepEqual(JSON.parse(health.text), { connected: true });
+const healthBody = JSON.parse(health.text);
+assert.equal(healthBody.connected, true, 'the hub smoke check reads connected: true');
+assert.equal(healthBody.config_source.credentials, 'local', 'without the launcher, set credentials count as local');
+assert.equal(healthBody.config_source.repository, 'unset');
+process.env.PR_COMPANION_CONFIG_SOURCES = JSON.stringify({
+  BITBUCKET_EMAIL: 'hub', BITBUCKET_API_TOKEN: 'hub', BITBUCKET_WORKSPACE: 'unset', BITBUCKET_REPOSITORY: 'env', ALLOWED_EMAILS: 'bogus'
+});
+const hubHealth = await call('check_bitbucket_connection', {});
+assert.deepEqual(JSON.parse(hubHealth.text), {
+  connected: true,
+  config_source: { credentials: 'hub', workspace: 'unset', repository: 'env', allowed_emails: 'unset' }
+});
+assert.ok(!hubHealth.text.includes('test-token') && !hubHealth.text.includes('dev@example.com'), 'sources carry names only');
+delete process.env.PR_COMPANION_CONFIG_SOURCES;
 userStatus = 401;
 const unauth = await call('check_bitbucket_connection', {});
 assert.ok(unauth.isError && /HTTP 401/.test(unauth.text) && !unauth.text.includes('dev@example.com'));

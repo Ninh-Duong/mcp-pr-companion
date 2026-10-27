@@ -39,7 +39,7 @@ export async function runSync(modeArg = process.argv[2]): Promise<number> {
   SecureShutdown.registerSignalHandlers();
   const { repositories } = ConfigManager.credentials();
   if (repositories.length === 0) {
-    console.error('Missing configuration in .env: BITBUCKET_REPOSITORY');
+    console.error(`Missing configuration (.env or the Hub's bitbucket block): BITBUCKET_REPOSITORY`);
     return 1;
   }
 

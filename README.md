@@ -138,7 +138,7 @@ The MCP tools (prefixed with pr__ when exposed through mcp-hub) are:
 | get_pr_comments | Read sanitized live review comments, including inline comments with file_id when available and whether the author is an app or person. Each comment is capped at 4,000 characters. |
 | list_my_open_prs | List your open PRs and their pr_url for a configured repository or all configured repositories. |
 | sync_my_open_prs | Sync your open PRs for one or all configured repositories. This existing tool retains its open-only behavior. |
-| check_bitbucket_connection | Check live Bitbucket credentials and the account allowlist. |
+| check_bitbucket_connection | Check live Bitbucket credentials and the account allowlist; also reports where each setting group came from (env, hub, local, unset). |
 
 The context pack includes live approval and build counts, plus open review thread summaries. These are fetched on each pack read and are not stored in the encrypted revision; comment text is capped at 4,000 characters and build statuses are limited to two pages.
 
@@ -150,22 +150,23 @@ Run the CLI sync command locally to fetch historical groups, then use list_synce
 
 1. Clone this repository beside mcp-hub: <parent>/mcp-hub and <parent>/mcp-pr-companion. The Hub template runs node bin/cli.js server from the child repository.
 2. Run node bin/cli.js prepare once to install dependencies and build.
-3. Keep credentials in this repository's .env. The Hub does not pass secrets.
+3. Put credentials in the Hub's bitbucket block (the Hub passes its file as CENTRAL_CONFIG_PATH) or in this repository's .env. Per value, process env wins over the Hub block, which wins over .env; empty values count as unset. A missing or broken Hub file logs a warning and .env is used. check and check_bitbucket_connection report where each value group came from (env, hub, local, or unset), never the values.
 4. The Hub exposes child tools with the pr__ prefix.
 
 See [docs/HUB_INTEGRATION.md](docs/HUB_INTEGRATION.md) and the Hub contract at ../mcp-hub/docs/mcps/mcp-pr-companion.md.
 
 ## 4. Configuration
 
-All configuration is stored in .env. See [.env.example](.env.example) for the full list.
+All configuration is stored in .env. Under mcp-hub, the five Bitbucket values below can also come from the Hub's bitbucket block (priority: process env > Hub block > .env > default; empty = unset). See [.env.example](.env.example) for the full list.
 
 | Variable | Required | Purpose |
 |---|---|---|
-| BITBUCKET_EMAIL | Yes | Atlassian account email |
-| BITBUCKET_API_TOKEN | Yes | Read-only Bitbucket API token |
-| BITBUCKET_REPOSITORY | For cmd, generate-all, sync, and check | Comma-separated repository list. generate-all and sync process all configured repositories; `sync` accepts `open`, `draft`, `merged`, `declined`, or `all`. `cmd` lets you choose repositories. The MCP server can start without it when tools receive an explicit repository or PR URL. `list_synced_prs` also uses it when `repository` is omitted. |
-| BITBUCKET_WORKSPACE | No | Default workspace for repository entries without workspace/repo. |
-| ALLOWED_EMAILS | No | Comma-separated account allowlist; empty allows any account with valid repository access. |
+| BITBUCKET_EMAIL | Yes | Atlassian account email. Hub: bitbucket.email. |
+| BITBUCKET_API_TOKEN | Yes | Read-only Bitbucket API token. Hub: bitbucket.api_token. |
+| BITBUCKET_REPOSITORY | For cmd, generate-all, sync, and check | Comma-separated repository list. generate-all and sync process all configured repositories; `sync` accepts `open`, `draft`, `merged`, `declined`, or `all`. `cmd` lets you choose repositories. The MCP server can start without it when tools receive an explicit repository or PR URL. `list_synced_prs` also uses it when `repository` is omitted. Hub: bitbucket.repository. |
+| BITBUCKET_WORKSPACE | No | Default workspace for repository entries without workspace/repo. Hub: bitbucket.workspace. |
+| ALLOWED_EMAILS | No | Comma-separated account allowlist; empty allows any account with valid repository access. Hub: bitbucket.allowed_emails (string or array). |
+| CENTRAL_CONFIG_PATH | No | Set by mcp-hub: path to the Hub's JSON file (relative to this repository). Only its bitbucket block is read; the file is never written. |
 | AUTO_SYNC_ON_START | No | true syncs the account's open PRs in configured repositories in the background. Default: false. |
 | TICKET_PREFIXES | No | Preferred ticket prefixes. Default: WCE-,PROJ-,JIRA-. The tool also detects KEY-123 in branch names or [KEY-123] in titles. |
 | PRIVACY_* | No | Privacy controls for returned and stored PR content. Defaults are safe. |
@@ -213,7 +214,7 @@ Run .\run.cmd check first.
 
 | Message | Resolution |
 |---|---|
-| Fill in BITBUCKET_... in .env | Fill in the missing setting in .env. |
+| Fill in BITBUCKET_... in .env or the Hub's bitbucket block | Fill in the missing setting in .env or, under mcp-hub, in the Hub's bitbucket block. |
 | Email or API token invalid | Check the account email and token or create a new token. |
 | Repository read access failed | Check BITBUCKET_REPOSITORY and the read:repository scope. |
 | No access: this account cannot read <ws>/<repo> | The configured account cannot read the repository, so it cannot unlock the encrypted cache. |

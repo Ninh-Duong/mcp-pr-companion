@@ -109,7 +109,7 @@ sequenceDiagram
 
 ## 6. Process model
 
-- `bin/cli.js` is the only supported entry. It keeps `node_modules` and `dist/` in sync with the lockfile and `src/` (via stamps), loads `.env` (real env vars win), checks the required keys, and spawns the entry with `cwd` = project root.
+- `bin/cli.js` is the only supported entry. It keeps `node_modules` and `dist/` in sync with the lockfile and `src/` (via stamps), fills unset Bitbucket values from the hub's `bitbucket` block when `CENTRAL_CONFIG_PATH` is set (relative to the project root; a missing or broken file is a warning), then loads `.env` (priority: process env > hub block > `.env`; empty = unset), records each value's source (`env`/`hub`/`local`/`unset`) in `PR_COMPANION_CONFIG_SOURCES` for `ConfigManager.sources()`, checks the required keys, and spawns the entry with `cwd` = project root.
 - Under mcp-hub the child's stderr is discarded. The launcher and `Logger` therefore also append to `Logs/mcp-server.log`.
 - The first start on a fresh clone runs `npm ci` and `tsc`, which can take a minute. Run `node bin/cli.js prepare` once before connecting a client.
 - With `AUTO_SYNC_ON_START=true`, the server starts `PRContextService.autoSync()` in the background right after the stdio connection is up. It runs the same code as `sync_my_open_prs` over every `BITBUCKET_REPOSITORY` entry, never blocks tool calls (overlapping PR syncs share one fetch), and logs `auto_sync done total=… synced=… unchanged=… failed=…`. mcp-hub starts children per client session, so this runs once per session.
