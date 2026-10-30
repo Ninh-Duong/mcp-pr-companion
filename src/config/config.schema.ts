@@ -17,6 +17,8 @@ export const BaseConfigSchema = z.object({
   allowed_emails: list([]),
   // Background sync of every BITBUCKET_REPOSITORY open PR when the MCP server starts.
   auto_sync_on_start: bool(false),
+  // Seconds after a successful freshness check during which get_pr_context_pack skips the next one (0 = always check).
+  freshness_ttl_seconds: z.preprocess(unset, z.coerce.number().int().min(0).default(120)),
   privacy: z.object({
     mode: str(z.enum(['strict', 'balanced', 'debug']).default('strict')),
     remove_author: bool(true),

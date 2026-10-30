@@ -1,8 +1,10 @@
 import { DataStore } from '../core/storage/data.store.js';
 import { PRRegistry, ParsedPRUrl } from '../core/registry/pr.registry.js';
-import { BitbucketCollector } from '../core/bitbucket/bitbucket.collector.js';
+import { BitbucketCollector, PRHead } from '../core/bitbucket/bitbucket.collector.js';
 import { PRManifestV4 } from '../core/output/schema/manifest.v4.schema.js';
-import { OutputReader } from '../core/output/output.reader.js';
+import { OutputReader, ActiveRevisionResult } from '../core/output/output.reader.js';
+import { RevisionWriter } from '../core/output/revision.writer.js';
+import { DiscoveredPR } from '../core/discovery/pr-list.normalizer.js';
 import { FileIndexEntryV4 } from '../core/output/schema/file_index.v4.schema.js';
 import { FileChangeV4 } from '../core/output/schema/file_change.v4.schema.js';
 import { SecretScanner } from '../core/privacy/secret.scanner.js';
@@ -32,7 +34,13 @@ export interface FileFilters {
 }
 
 const NOT_SYNCED = 'PR is not synced yet. Call get_pr_context_pack for this pr_url first.';
-type Head = Awaited<ReturnType<BitbucketCollector['getHeadCommits']>>;
+type Head = PRHead;
+/** Same commit when one hash is a prefix of the other (Bitbucket returns short hashes; revision ids use 7 chars). */
+const sameCommit = (a?: string, b?: string) => {
+  const x = (a ?? '').toLowerCase();
+  const y = (b ?? '').toLowerCase();
+  return x.length >= 7 && y.length >= 7 && (x.startsWith(y) || y.startsWith(x));
+};
 const MAX_COMMENT_CHARS = 4000;
 const capText = (text: string) => text.length > MAX_COMMENT_CHARS
   ? `${text.slice(0, MAX_COMMENT_CHARS)}\n[truncated: ${MAX_COMMENT_CHARS} of ${text.length} chars]`
@@ -53,23 +61,28 @@ const statusCommitHash = (status: any): string | null => {
  * request per repository per minute) before reading or writing.
  */
 export class PRContextService {
-  private static inFlight = new Map<string, Promise<PRManifestV4>>();
+  private static inFlight = new Map<string, Promise<{ manifest: PRManifestV4; head: Head }>>();
 
   static page(text: string, offset: number, maxChars: number): Page {
     const end = Math.min(text.length, offset + maxChars);
     return { text: text.slice(offset, end), total_chars: text.length, next_offset: end < text.length ? end : null };
   }
 
-  /** Collects the PR and writes a new revision. Concurrent calls for one PR share one fetch, refresh or not. */
-  static sync(pr: ParsedPRUrl, collector = new BitbucketCollector()): Promise<PRManifestV4> {
+  /**
+   * Collects the PR and writes a new revision. Concurrent calls for one PR share one fetch, refresh or not.
+   * `metadata` from a freshness check just made is reused instead of fetching it again; the returned head
+   * comes from the metadata the revision was built from.
+   */
+  static sync(pr: ParsedPRUrl, collector = new BitbucketCollector(), metadata?: any): Promise<{ manifest: PRManifestV4; head: Head }> {
     const key = `${pr.workspace}:${pr.repoSlug}:${pr.prId}`;
     let task = this.inFlight.get(key);
     if (!task) {
       task = AccessGate.unlock(pr.workspace, pr.repoSlug)
-        .then(() => collector.collect(pr.workspace, pr.repoSlug, pr.prId))
+        .then(() => collector.collect(pr.workspace, pr.repoSlug, pr.prId, {}, metadata))
         .then(async raw => {
           await AccessGate.unlock(pr.workspace, pr.repoSlug); // a long download may outlive the unlock TTL
-          return DataStore.saveRevision(pr.workspace, pr.repoSlug, pr.prId, raw).manifest;
+          const { manifest } = DataStore.saveRevision(pr.workspace, pr.repoSlug, pr.prId, raw);
+          return { manifest, head: BitbucketCollector.headOf(raw.metadata) };
         })
         .finally(() => this.inFlight.delete(key));
       this.inFlight.set(key, task);
@@ -80,15 +93,26 @@ export class PRContextService {
   /**
    * Re-syncs when there is no local revision, on refresh, or when the PR's commits, state, or draft
    * flag changed since the last sync. The note explains a cached answer when freshness could not be checked.
+   * Within FRESHNESS_TTL_SECONDS of the last successful check (current.json freshness_checked_at, or the
+   * sync itself) no metadata request is made and `recent` carries the age of that check.
    */
-  static async ensureFresh(pr: ParsedPRUrl, refresh: boolean): Promise<{ status: 'synced' | 'unchanged' | 'offline'; note: string | null; head?: Head }> {
+  static async ensureFresh(pr: ParsedPRUrl, refresh: boolean): Promise<{
+    status: 'synced' | 'unchanged' | 'offline';
+    note: string | null;
+    head?: Head;
+    recent?: { ageSeconds: number; sourceCommit: string };
+  }> {
     // Outside the try: missing credentials, ALLOWED_EMAILS denial or no repository access must fail the call.
     const collector = new BitbucketCollector();
     await AccessGate.unlock(pr.workspace, pr.repoSlug);
     const active = refresh ? null : OutputReader.getActiveRevision(pr.workspace, pr.repoSlug, pr.prId);
     if (!active) {
-      await this.sync(pr, collector);
-      return { status: 'synced', note: null };
+      const { head } = await this.sync(pr, collector);
+      return { status: 'synced', note: null, head };
+    }
+    const ageMs = this.checkedRecently(pr, active);
+    if (ageMs !== null) {
+      return { status: 'unchanged', note: null, recent: { ageSeconds: Math.floor(ageMs / 1000), sourceCommit: active.current.source_commit ?? '' } };
     }
 
     let head: Head;
@@ -103,21 +127,42 @@ export class PRContextService {
       head.state.toUpperCase() !== active.manifest?.state.toUpperCase() ||
       head.isDraft !== active.manifest?.is_draft ||
       OutputReader.hasPendingStatusMigration(pr.workspace, pr.repoSlug, pr.prId, getPRStorageStatus(head.state, head.isDraft))) {
-      await this.sync(pr, collector);
-      return { status: 'synced', note: null, head };
+      const synced = await this.sync(pr, collector, head.metadata);
+      return { status: 'synced', note: null, head: synced.head };
     }
+    this.recordFreshnessCheck(pr, active);
     return { status: 'unchanged', note: null, head };
+  }
+
+  /** Milliseconds since the last successful freshness check when it is within the TTL and nothing is pending; otherwise null. */
+  private static checkedRecently(pr: ParsedPRUrl, active: ActiveRevisionResult): number | null {
+    const ttlMs = ConfigManager.loadBase().freshness_ttl_seconds * 1000;
+    if (ttlMs === 0 || !active.manifest) return null;
+    const last = Math.max(Date.parse(active.current.freshness_checked_at ?? '') || 0, Date.parse(active.current.updated_at ?? '') || 0);
+    const age = Date.now() - last;
+    if (age < 0 || age >= ttlMs) return null; // a clock that moved back never extends the window
+    const status = getPRStorageStatus(active.manifest.state, active.manifest.is_draft);
+    return OutputReader.hasPendingStatusMigration(pr.workspace, pr.repoSlug, pr.prId, status) ? null : age;
+  }
+
+  /** Persists the time of a successful check in current.json. Failing to write it never fails the call. */
+  private static recordFreshnessCheck(pr: ParsedPRUrl, active: ActiveRevisionResult): void {
+    try {
+      RevisionWriter.recordFreshnessCheck(active.prDir, { workspace: pr.workspace, repoSlug: pr.repoSlug, prId: pr.prId }, active.current);
+    } catch (err) {
+      Logger.warn(`freshness_stamp_failed type=${err instanceof Error ? err.name : typeof err}`);
+    }
   }
 
   static async getContextPack(prUrl: string, refresh: boolean, includeFileTable: boolean): Promise<string> {
     const pr = PRRegistry.parseAndValidateUrl(prUrl);
-    const { note, head, status } = await this.ensureFresh(pr, refresh);
+    const { note, head, status, recent } = await this.ensureFresh(pr, refresh);
     const context = OutputReader.getContextPack(pr.workspace, pr.repoSlug, pr.prId);
     if (!context) throw new Error('Context pack generation failed: context.md was not written.');
 
     const live = status === 'offline'
       ? ['## Live review data\nSkipped: Bitbucket could not be reached.']
-      : await Promise.all([this.reviewStatusSection(pr, head), this.reviewThreadsSection(pr)]);
+      : await Promise.all([this.reviewStatusSection(pr, head, recent), this.reviewThreadsSection(pr)]);
     const parts = [note, context, ...live];
     if (includeFileTable) parts.push(OutputReader.getFilesSummary(pr.workspace, pr.repoSlug, pr.prId));
     return parts.filter(Boolean).join('\n\n---\n\n');
@@ -182,19 +227,21 @@ export class PRContextService {
     return { total: comments.length, complete, comments: page, next_offset: end < comments.length ? end : null };
   }
 
-  private static async reviewStatusSection(pr: ParsedPRUrl, head?: Head): Promise<string> {
+  private static async reviewStatusSection(pr: ParsedPRUrl, head?: Head, recent?: { ageSeconds: number; sourceCommit: string }): Promise<string> {
     const lines = ['## Review status (live)'];
     const reason = (err: unknown) => SecretScanner.scanAndRedact(PIISanitizer.sanitizeText(err instanceof Error ? err.message : String(err)));
     const collector = new BitbucketCollector();
-    try {
-      head ??= await collector.getHeadCommits(pr.workspace, pr.repoSlug, pr.prId);
+    // Build statuses are compared with this source commit: the live one, or the cached one while it is known current.
+    const sourceCommit = head?.source ?? recent?.sourceCommit;
+    if (head) {
       const state = SecretScanner.scanAndRedact(PIISanitizer.sanitizeText(head.state)).replace(/\s+/g, ' ').slice(0, 40);
       if (state.toUpperCase() !== 'OPEN' || head.isDraft) lines.push(`State: ${state}${head.isDraft ? ' (draft)' : ''}`);
       const participants = head.participants;
       const count = (predicate: (participant: any) => boolean) => participants.filter(predicate).length;
       lines.push(`Approvals: ${count(p => p.approved)} · Changes requested: ${count(p => p.state === 'changes_requested')} · Participants: ${participants.length} (reviewers: ${count(p => p.role === 'REVIEWER')})`);
-    } catch (err) {
-      lines.push(`Approvals: unavailable (${reason(err)})`);
+    } else {
+      // Approvals come from the PR metadata request, which the freshness TTL just skipped; it is not made a second way.
+      lines.push(`Approvals: not rechecked (Bitbucket was checked ${recent?.ageSeconds ?? 0}s ago; checked again after ${ConfigManager.loadBase().freshness_ttl_seconds}s)`);
     }
     try {
       const res = await collector.getStatuses(pr.workspace, pr.repoSlug, pr.prId);
@@ -202,7 +249,7 @@ export class PRContextService {
       const clean = (text: unknown) => SecretScanner.scanAndRedact(PIISanitizer.sanitizeText(String(text ?? ''))).replace(/\s+/g, ' ').trim();
       const isOlderCommit = (status: any) => {
         const commitHash = statusCommitHash(status);
-        return Boolean(head && head.source !== 'unknown_source' && commitHash && !commitHash.toLowerCase().startsWith(head.source.toLowerCase()));
+        return Boolean(sourceCommit && sourceCommit !== 'unknown_source' && commitHash && !commitHash.toLowerCase().startsWith(sourceCommit.toLowerCase()));
       };
       const latest = new Map<string, any>();
       for (const [index, status] of res.values.entries()) {
@@ -261,8 +308,8 @@ export class PRContextService {
         const detail = [`${comments.length} open`, appNote(comments), at.length ? `line ${at.join(', ')}` : ''].filter(Boolean).join(', ');
         lines.push(`- ${where} (${detail}): ${text.length > 120 ? `${text.slice(0, 120)}…` : text}`);
       }
-      if (byWhere.size > 10) lines.push(`- … ${byWhere.size - 10} more files`);
-      if (open.length) lines.push('Full text: get_pr_comments(pr_url, include_resolved=false)');
+      // Summarized threads are not repeated by get_pr_comments; it is named only for the file groups left out.
+      if (byWhere.size > 10) lines.push(`- … ${byWhere.size - 10} more files: get_pr_comments(pr_url, include_resolved=false) lists them`);
       return lines.join('\n');
     } catch (err) {
       return `${title}\nUnavailable: ${SecretScanner.scanAndRedact(err instanceof Error ? err.message : String(err))}`;
@@ -301,6 +348,23 @@ export class PRContextService {
 
   /** Open PRs authored by the token's account, in one repository or every BITBUCKET_REPOSITORY entry. */
   static async listMyOpenPRs(repository?: string) {
+    const { found, warnings } = await this.discoverMyOpenPRs(repository);
+    const prs = found.map(({ pr_url, repository: target, discovered: p }) => ({
+      pr_url,
+      repository: target,
+      id: p.id,
+      title: p.title,
+      is_draft: p.isDraft,
+      source_branch: p.sourceBranch,
+      target_branch: p.targetBranch,
+      updated_on: p.updatedOn,
+      local: p.cacheStatus.toLowerCase()
+    }));
+    return { total: prs.length, prs, ...(warnings.length ? { warnings } : {}) };
+  }
+
+  /** Live discovery, keeping the commits, state and draft flag that Bitbucket's listing already returned. */
+  private static async discoverMyOpenPRs(repository?: string) {
     const collector = new BitbucketCollector(); // credentials + ALLOWED_EMAILS
     const { email, token, repositories } = ConfigManager.credentials();
     const targets = repository ? [repository] : repositories;
@@ -308,24 +372,17 @@ export class PRContextService {
     if (targets.some(r => !/^[\w.-]+\/[\w.-]+$/.test(r) || r.split('/').some(s => /^\.+$/.test(s)))) throw new Error('repository must look like "workspace/repo".');
 
     const me = await collector.currentUserUuid();
-    const prs = [];
+    const found: Array<{ pr_url: string; repository: string; discovered: DiscoveredPR }> = [];
+    const warnings: string[] = [];
     for (const target of targets) {
       const [workspace, repoSlug] = target.split('/');
-      for (const p of await PRDiscoveryService.discoverOpenPRs(email, token, workspace, repoSlug, me)) {
-        prs.push({
-          pr_url: `https://bitbucket.org/${workspace}/${repoSlug}/pull-requests/${p.id}`,
-          repository: target,
-          id: p.id,
-          title: p.title,
-          is_draft: p.isDraft,
-          source_branch: p.sourceBranch,
-          target_branch: p.targetBranch,
-          updated_on: p.updatedOn,
-          local: p.cacheStatus.toLowerCase()
-        });
+      const result = await PRDiscoveryService.discoverOpenPRsWithWarnings(email, token, workspace, repoSlug, me);
+      warnings.push(...result.warnings);
+      for (const discovered of result.prs) {
+        found.push({ pr_url: `https://bitbucket.org/${workspace}/${repoSlug}/pull-requests/${discovered.id}`, repository: target, discovered });
       }
     }
-    return { total: prs.length, prs };
+    return { found, warnings };
   }
 
   static async listSyncedPRs(repository?: string, status?: PRStorageStatus, offset = 0, limit = 50) {
@@ -362,30 +419,56 @@ export class PRContextService {
 
   /**
    * Syncs every open PR of the account (one repository or every BITBUCKET_REPOSITORY entry).
-   * Unchanged PRs cost one metadata request; one failing PR never stops the batch.
+   * Discovery already returns each PR's commits, state and draft flag, so a PR whose active revision matches
+   * them costs no request of its own and a PR that differs is synced directly. One failing PR never stops the batch.
    */
   static async syncMyOpenPRs(repository?: string, force = false) {
-    const { prs } = await this.listMyOpenPRs(repository);
+    const { found, warnings } = await this.discoverMyOpenPRs(repository);
     const limit = pLimit(3);
-    const results = await Promise.all(prs.map(p => limit(async () => {
-      const pr = PRRegistry.parseAndValidateUrl(p.pr_url);
+    const results = await Promise.all(found.map(({ pr_url, discovered: p }) => limit(async () => {
+      const pr = PRRegistry.parseAndValidateUrl(pr_url);
       try {
-        const { status } = await this.ensureFresh(pr, force);
+        let status: 'synced' | 'unchanged' | 'offline';
+        if (!force && await this.matchesDiscovery(pr, p)) {
+          status = 'unchanged';
+        } else if (force || (p.sourceCommitHash && p.destinationCommitHash)) {
+          await this.sync(pr);
+          status = 'synced';
+        } else {
+          ({ status } = await this.ensureFresh(pr, false)); // the listing had no commits: check the PR itself
+        }
         const manifest = OutputReader.getActiveRevision(pr.workspace, pr.repoSlug, pr.prId)?.manifest;
         return {
-          pr_url: p.pr_url, id: p.id, title: p.title, status,
+          pr_url, id: p.id, title: p.title, status,
           ticket: manifest?.ticket_id ?? null,
           overall_risk: manifest?.risk_summary.overall_level ?? null,
           files_changed: manifest?.stats.files_changed ?? null,
-          updated_on: p.updated_on
+          updated_on: p.updatedOn
         };
       } catch (err) {
-        return { pr_url: p.pr_url, id: p.id, title: p.title, status: 'failed' as const, updated_on: p.updated_on,
+        return { pr_url, id: p.id, title: p.title, status: 'failed' as const, updated_on: p.updatedOn,
           error: SecretScanner.scanAndRedact(err instanceof Error ? err.message : String(err)) };
       }
     })));
     const count = (status: string) => results.filter(r => r.status === status).length;
-    return { total: results.length, synced: count('synced'), unchanged: count('unchanged'), failed: count('failed'), prs: results };
+    return { total: results.length, synced: count('synced'), unchanged: count('unchanged'), failed: count('failed'), prs: results, ...(warnings.length ? { warnings } : {}) };
+  }
+
+  /** True when the active revision matches the listing's commits, state and draft flag and sits in its status directory. */
+  private static async matchesDiscovery(pr: ParsedPRUrl, p: DiscoveredPR): Promise<boolean> {
+    if (p.cacheStatus !== 'Cached') return false;
+    await AccessGate.unlock(pr.workspace, pr.repoSlug);
+    const active = OutputReader.getActiveRevision(pr.workspace, pr.repoSlug, pr.prId);
+    if (!active?.manifest ||
+      !sameCommit(active.current.source_commit, p.sourceCommitHash) ||
+      !sameCommit(active.current.target_commit, p.destinationCommitHash) ||
+      active.manifest.state.toUpperCase() !== p.state.toUpperCase() ||
+      active.manifest.is_draft !== p.isDraft ||
+      OutputReader.hasPendingStatusMigration(pr.workspace, pr.repoSlug, pr.prId, getPRStorageStatus(p.state, p.isDraft))) {
+      return false;
+    }
+    this.recordFreshnessCheck(pr, active); // the listing was a successful freshness check
+    return true;
   }
 
   /** AUTO_SYNC_ON_START: background sync after the server starts. Never throws; results go to the log. */

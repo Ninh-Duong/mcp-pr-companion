@@ -27,6 +27,9 @@ export interface DiscoveryResult {
 }
 
 export class PRDiscoveryService {
+  /** Pages (50 PRs each) the unfiltered fallback listing reads when the author-filtered query returns nothing. */
+  static readonly FALLBACK_MAX_PAGES = 2;
+
   private static context(
     emailOrContext: string | DiscoveryContext,
     token?: string,
@@ -64,7 +67,13 @@ export class PRDiscoveryService {
     for (const state of [...new Set(states)]) {
       let page = await client.listPullRequests(ws, repo, query, state);
       if (page.values.length === 0 && page.isComplete) {
-        page = await client.listPullRequests(ws, repo, '', state);
+        // The author filter is authoritative; this unfiltered fallback only guards against a query Bitbucket
+        // ignored, so it reads the newest pages and labels a cut-off listing instead of scanning the whole repository.
+        page = await client.listPullRequests(ws, repo, '', state, { maxPages: this.FALLBACK_MAX_PAGES });
+        if (!page.isComplete && page.warnings.length === 0) {
+          warnings.push(`Fallback listing incomplete: the author filter returned no ${state} pull requests; checked only the ${this.FALLBACK_MAX_PAGES} newest pages of all ${state} pull requests.`);
+          page = { ...page, isComplete: true };
+        }
       }
       complete &&= page.isComplete;
       warnings.push(...page.warnings.map(w => SecretScanner.scanAndRedact(w)));
@@ -94,12 +103,23 @@ export class PRDiscoveryService {
     repoSlug?: string,
     currentUserUuid?: string
   ): Promise<DiscoveredPR[]> {
+    return (await this.discoverOpenPRsWithWarnings(emailOrContext, token, workspace, repoSlug, currentUserUuid)).prs;
+  }
+
+  /** Open PRs plus the warnings of a complete listing (e.g. a cut-off fallback). An incomplete listing throws. */
+  static async discoverOpenPRsWithWarnings(
+    emailOrContext: string | DiscoveryContext,
+    token?: string,
+    workspace?: string,
+    repoSlug?: string,
+    currentUserUuid?: string
+  ): Promise<{ prs: DiscoveredPR[]; warnings: string[] }> {
     const result = await this.discoverMyPRs(emailOrContext, token, workspace, repoSlug, currentUserUuid, ['OPEN']);
     if (!result.complete) {
       const context = this.context(emailOrContext, token, workspace, repoSlug, currentUserUuid);
       const { workspace: ws, repoSlug: repo } = context.repository;
       throw new Error(`Could not list pull requests for ${ws}/${repo}: discovery was incomplete: ${result.warnings.join('; ') || 'Bitbucket pagination stopped early.'}`);
     }
-    return result.prs;
+    return { prs: result.prs, warnings: result.warnings };
   }
 }

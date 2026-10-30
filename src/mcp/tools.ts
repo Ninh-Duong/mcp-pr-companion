@@ -10,9 +10,9 @@ import { ConfigManager } from '../config/config.manager.js';
 const { version } = JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf-8'));
 
 export const INSTRUCTIONS = `mcp-pr-companion provides sanitized Bitbucket PR context.
-1. Start with get_pr_context_pack(pr_url). It syncs when commits, state, draft flag, or storage location changed; the pack includes live approvals, build status and open review threads.
+1. Start with get_pr_context_pack(pr_url). It syncs when commits, state, draft flag, or storage location changed (re-checked at most every 120 s by default; refresh=true forces a sync); the pack includes live approvals, build status and open review threads.
 2. Use search_pr_files(pr_url, filters) to find file ids; read one with get_pr_file_context or get_pr_file_changes. Long text is paged by offset.
-3. Use get_pr_comments(pr_url) for full review feedback; include_resolved=false shows open comments only.
+3. Use get_pr_comments(pr_url) only for full comment text, resolved comments, or threads the pack left out; include_resolved=false shows open comments only.
 Re-review: open only ids in the pack's "Changed since last sync" section.
 No PR URL? list_my_open_prs finds the account's open PRs; list_synced_prs lists encrypted local PRs by status. sync_my_open_prs syncs open PRs; show its prs as a table.
 The cache is encrypted. Never read ai-context/ files directly. "No access: …" means the access check failed.
@@ -50,10 +50,10 @@ export function createServer(): McpServer {
     {
       title: 'PR context pack',
       description:
-        'START HERE. Returns sanitized PR context, a Read Strategy, and live approvals, build status and open review threads. Syncs when missing, commits/state/draft changed, or status-folder migration is pending. Cached revisions remain available when Bitbucket is temporarily unreachable.',
+        'START HERE. Returns sanitized PR context, a Read Strategy, and live approvals, build status and open review threads. Syncs when missing, commits/state/draft changed, or status-folder migration is pending. Within FRESHNESS_TTL_SECONDS (default 120) of the last successful check it does not re-check Bitbucket metadata, and approvals read "not rechecked". Cached revisions remain available when Bitbucket is temporarily unreachable.',
       inputSchema: {
         pr_url: prUrl,
-        refresh: z.boolean().default(false).describe('Force a full re-sync even if the cached revision looks current.'),
+        refresh: z.boolean().default(false).describe('Force a full re-sync even if the cached revision looks current or was checked within the freshness TTL.'),
         include_file_table: z.boolean().default(false).describe('Append the table of every changed file (larger output).')
       },
       // Writes only the local ai-context cache; reads Bitbucket.
@@ -151,7 +151,7 @@ export function createServer(): McpServer {
     {
       title: 'My open PRs',
       description:
-        'Open PRs authored by the configured Bitbucket account, in one repository or every repository listed in BITBUCKET_REPOSITORY. Returns JSON {total, prs:[{pr_url, repository, id, title, is_draft, source_branch, target_branch, updated_on, local}]}; local is missing | cached | outdated.',
+        'Open PRs authored by the configured Bitbucket account, in one repository or every repository listed in BITBUCKET_REPOSITORY. Returns JSON {total, prs:[{pr_url, repository, id, title, is_draft, source_branch, target_branch, updated_on, local}], warnings?}; local is missing | cached | outdated; warnings labels a cut-off fallback listing.',
       inputSchema: {
         repository: z.string().optional().describe('"workspace/repo"; omit to use BITBUCKET_REPOSITORY.')
       },
@@ -165,7 +165,7 @@ export function createServer(): McpServer {
     {
       title: 'Sync my open PRs',
       description:
-        'Syncs every open PR authored by the configured account in one repository (or every BITBUCKET_REPOSITORY entry) into the encrypted local cache, skipping PRs whose commits, state, draft flag, and storage location match unless force. Returns JSON {total, synced, unchanged, failed, prs:[{pr_url, id, title, status, ticket, overall_risk, files_changed, updated_on, error?}]}: show it to the user as a table.',
+        'Syncs every open PR authored by the configured account in one repository (or every BITBUCKET_REPOSITORY entry) into the encrypted local cache, skipping PRs whose commits, state, draft flag, and storage location match the listing unless force (no per-PR request for those). Returns JSON {total, synced, unchanged, failed, prs:[{pr_url, id, title, status, ticket, overall_risk, files_changed, updated_on, error?}], warnings?}: show it to the user as a table.',
       inputSchema: {
         repository: z.string().optional().describe('"workspace/repo"; omit to use BITBUCKET_REPOSITORY.'),
         force: z.boolean().default(false).describe('Re-sync every PR even if its commits did not move.')

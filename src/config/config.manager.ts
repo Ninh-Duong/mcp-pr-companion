@@ -31,6 +31,7 @@ export class ConfigManager {
       ticket_prefix: env.TICKET_PREFIXES,
       allowed_emails: env.ALLOWED_EMAILS,
       auto_sync_on_start: env.AUTO_SYNC_ON_START,
+      freshness_ttl_seconds: env.FRESHNESS_TTL_SECONDS,
       privacy: {
         mode: env.PRIVACY_MODE,
         remove_author: env.PRIVACY_REMOVE_AUTHOR,

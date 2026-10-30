@@ -10,6 +10,7 @@ process.env.BITBUCKET_EMAIL = 'dev@example.com';
 process.env.BITBUCKET_API_TOKEN = 'test-token';
 process.env.AI_CONTEXT_COMPANY = 'acme';
 process.env.PRIVACY_FILE_PATH_MODE = 'sanitized';
+process.env.FRESHNESS_TTL_SECONDS = '0'; // every call re-checks here; tests/freshness.test.ts covers the TTL
 delete process.env.BITBUCKET_REPOSITORY;
 delete process.env.ALLOWED_EMAILS;
 delete process.env.PR_COMPANION_CONFIG_SOURCES;
@@ -39,7 +40,7 @@ let repoStatus = 200;
 let metadataStatus = 200;
 let statusesStatus = 200;
 let commentsStatus = 200;
-const calls: Record<string, number> = { metadata: 0, diff: 0, comments: 0 };
+const calls: Record<string, number> = { metadata: 0, diff: 0, comments: 0, user: 0 };
 globalThis.fetch = (async (input: string | URL) => {
   const url = String(input);
   const ok = (body: unknown) => new Response(typeof body === 'string' ? body : JSON.stringify(body), { status: 200 });
@@ -47,6 +48,7 @@ globalThis.fetch = (async (input: string | URL) => {
     return repoStatus === 200 ? ok({ uuid: REPO_UUID, full_name: 'acme/demo-repo' }) : new Response('{}', { status: repoStatus, statusText: 'Forbidden' });
   }
   if (url.endsWith('/2.0/user')) {
+    calls.user++;
     return userStatus === 200 ? ok({ uuid: '{u}', display_name: 'Dev' }) : new Response('{}', { status: userStatus, statusText: 'Unauthorized' });
   }
   if (url.endsWith('/pullrequests/7')) {
@@ -122,6 +124,8 @@ const pack = await call('get_pr_context_pack', { pr_url: PR_URL });
 assert.ok(!pack.isError, pack.text);
 assert.match(pack.text, /Add invoice export endpoint/);
 assert.equal(calls.diff, 1);
+assert.equal(calls.metadata, 1, 'the first sync fetches PR metadata once and the live section reuses it');
+assert.ok(!pack.text.includes('get_pr_comments'), 'the pack does not send agents to get_pr_comments for threads it already summarizes');
 console.log('  ✓ get_pr_context_pack syncs on first use');
 assert.match(pack.text, /## Review status \(live\)\nState: OPEN \(draft\)\nApprovals: 1 · Changes requested: 1 · Participants: 2 \(reviewers: 1\)\nBuild: 1 failed, 0 passed, 1 running; 1 older commit/);
 assert.match(pack.text, /- FAILED Pipeline #13: 2 tests failed, ask/);
@@ -169,7 +173,9 @@ assert.equal(calls.diff, 1, 'no re-download while the head commits are unchanged
 // 5. New source commit: automatic re-sync, and the pack names the files that changed
 sourceHash = 'cccccccccccc';
 extraLine = '\n+  const added = 1;';
+const metadataBeforeResync = calls.metadata;
 const resynced = await call('get_pr_context_pack', { pr_url: PR_URL });
+assert.equal(calls.metadata, metadataBeforeResync + 1, 'the re-sync and the live section reuse the metadata of the freshness check');
 assert.match(resynced.text, /## Changed since last sync \(rev_aaaaaaa_bbbbbbb\)\n- file_0001 `src\/\.\.\.\/billing\/InvoiceController\.ts` \(modified\)/);
 assert.equal(calls.diff, 2, 're-sync after the source commit moved');
 assert.equal(JSON.parse((await call('get_pr_sync_status', { pr_url: PR_URL })).text).source_commit, sourceHash);
@@ -300,13 +306,17 @@ assert.ok(badId.isError && /Invalid file_id/.test(badId.text));
 console.log('  ✓ invalid input returns isError "Error: …"');
 
 // 10b. Batch sync of my open PRs (+ AUTO_SYNC_ON_START path)
+const metadataBeforeBatch = calls.metadata;
 const batch = JSON.parse((await call('sync_my_open_prs', { repository: 'acme/demo-repo' })).text);
 assert.deepEqual([batch.total, batch.unchanged, batch.failed], [1, 1, 0]);
+assert.equal(calls.metadata, metadataBeforeBatch, 'an unchanged cached PR costs no per-PR metadata request');
+assert.equal(calls.user, 1, 'the account UUID is fetched once per process for the same credentials');
 assert.equal(batch.prs[0].pr_url, PR_URL);
 assert.equal(batch.prs[0].ticket, 'WCE-12');
 assert.ok(batch.prs[0].overall_risk && batch.prs[0].files_changed === 1);
 const forced = JSON.parse((await call('sync_my_open_prs', { repository: 'acme/demo-repo', force: true })).text);
 assert.equal(forced.prs[0].status, 'synced');
+assert.equal(calls.metadata, metadataBeforeBatch + 1, 'a forced sync fetches metadata once (inside the sync)');
 const before = calls.diff;
 sourceHash = 'dddddddddddd';
 process.env.BITBUCKET_REPOSITORY = 'acme/demo-repo';

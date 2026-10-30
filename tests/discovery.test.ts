@@ -75,3 +75,27 @@ globalThis.fetch = (async () => {
 assert.deepEqual(await PRDiscoveryService.discoverOpenPRs('dev@example.com', 'token', 'acme', 'demo', me), []);
 assert.equal(emptyListingCalls, 2, 'falls back to an unfiltered query, then client-side filters');
 console.log('  ✓ a successful empty listing returns an empty list');
+
+// The unfiltered fallback reads at most FALLBACK_MAX_PAGES pages of a large repository and labels the cut-off.
+const fallbackPages: number[] = [];
+const other = '{99999999-2222-3333-4444-555555555555}';
+globalThis.fetch = (async (input: string | URL) => {
+  const url = new URL(String(input));
+  if (url.searchParams.get('q')) return new Response(JSON.stringify({ values: [] }), { status: 200 });
+  const pageNumber = Number(url.searchParams.get('page') || 1);
+  fallbackPages.push(pageNumber);
+  const mine = pageNumber === 2 ? [pr(302)] : [];
+  return new Response(JSON.stringify({
+    values: [{ ...pr(400 + pageNumber), author: { uuid: other } }, ...mine],
+    next: `https://api.bitbucket.org/2.0/repositories/acme/demo/pullrequests?page=${pageNumber + 1}`
+  }), { status: 200 });
+}) as typeof fetch;
+const bounded = await PRDiscoveryService.discoverOpenPRsWithWarnings('dev@example.com', 'token', 'acme', 'demo', me);
+assert.deepEqual(fallbackPages, [1, 2], 'fallback stops after FALLBACK_MAX_PAGES pages');
+assert.equal(PRDiscoveryService.FALLBACK_MAX_PAGES, 2);
+assert.deepEqual(bounded.prs.map(p => p.id), [302], 'partial fallback results are still returned, filtered to the author');
+assert.equal(bounded.warnings.length, 1);
+assert.match(bounded.warnings[0], /^Fallback listing incomplete: .*checked only the 2 newest pages/);
+const boundedState = await PRDiscoveryService.discoverMyPRs('dev@example.com', 'token', 'acme', 'demo', me, ['MERGED']);
+assert.equal(boundedState.complete, true, 'the authoritative author query was complete; the cut-off is a warning');
+console.log('  ✓ the unfiltered fallback is bounded to 2 pages and labeled when cut off');
