@@ -1,0 +1,336 @@
+import path from 'path';
+import { RawPRRevision } from '../bitbucket/bitbucket.types.js';
+import { ConfigManager } from '../../config/config.manager.js';
+import { GitParser } from '../git/git.parser.js';
+import { RedactionTracker } from '../privacy/redaction.report.js';
+import { PIISanitizer } from '../privacy/pii.sanitizer.js';
+import { SecretScanner } from '../privacy/secret.scanner.js';
+import { PathSanitizer } from '../privacy/path.sanitizer.js';
+import { SensitiveFilePolicy } from '../analyzer/sensitive.file.policy.js';
+import { BitbucketAllowlistProjector } from '../bitbucket/bitbucket.allowlist.js';
+import { DiffParser } from '../analyzer/diff.parser.js';
+import { ChangeClassifier } from '../analyzer/change.classifier.js';
+import { RiskAnalyzer, RiskLevel } from '../analyzer/risk.analyzer.js';
+import { SymbolExtractor } from '../analyzer/symbol.extractor.js';
+import { RevisionWriter } from '../output/revision.writer.js';
+import { OutputReader } from '../output/output.reader.js';
+import { PRManifestV4 } from '../output/schema/manifest.v4.schema.js';
+import { FileIndexEntryV4 } from '../output/schema/file_index.v4.schema.js';
+import { FileChangeV4 } from '../output/schema/file_change.v4.schema.js';
+import { PRCoverageV4 } from '../output/schema/coverage.v4.schema.js';
+import { getPRStorageStatus } from '../pr-status.js';
+
+const RISK_ORDER: RiskLevel[] = ['none', 'low', 'medium', 'high', 'critical'];
+
+export class DataStore {
+  static getActiveRevision(workspace: string, repoSlug: string, prId: number) {
+    return OutputReader.getActiveRevision(workspace, repoSlug, prId);
+  }
+
+  /** Whether a PR has local data, without decrypting anything (no unlock needed). */
+  static hasRevision(workspace: string, repoSlug: string, prId: number): boolean {
+    return OutputReader.hasPRRevision(workspace, repoSlug, prId);
+  }
+
+  /**
+   * Generates Agent-Optimized Output Schema v4 from a raw Bitbucket revision.
+   */
+  static saveRevision(
+    workspace: string,
+    repoSlug: string,
+    prId: number,
+    rawRev: RawPRRevision
+  ): { cacheKey: string; manifest: PRManifestV4; revisionId: string } {
+    const config = ConfigManager.loadBase();
+    const privacy = config.privacy;
+    const tracker = new RedactionTracker();
+
+    // 2. Allowlist projection from raw response
+    const projectedMeta = BitbucketAllowlistProjector.projectMetadata(rawRev.metadata, privacy.remove_author);
+    const storageStatus = getPRStorageStatus(projectedMeta.state, Boolean(projectedMeta.draft));
+    const projectedCommits = BitbucketAllowlistProjector.projectCommits(rawRev.commits, privacy.max_commit_subjects);
+    const projectedDiffstat = BitbucketAllowlistProjector.projectDiffstat(rawRev.diffstat);
+
+    // 3. Sanitize Title & Description & Commits
+    const clean = (text: string) => SecretScanner.scanAndRedact(PIISanitizer.sanitizeText(text, tracker), tracker);
+    const sanitizedTitle = clean(projectedMeta.title);
+    const sanitizedDesc = BitbucketAllowlistProjector.truncateDescription(clean(projectedMeta.description));
+    const commitSubjects: string[] = projectedCommits.map(c => BitbucketAllowlistProjector.truncateCommitSubject(clean(c.subject)));
+
+    const ticketId = GitParser.extractTicketId(
+      projectedMeta.source.branch.name,
+      commitSubjects,
+      config.ticket_prefix,
+      sanitizedTitle
+    );
+
+    // 4. Parse unified diff
+    const parsedDiff = DiffParser.parse(rawRev.rawDiff || '');
+
+    // 5. Process Files & Build V4 Index & Changes
+    let totalAdditions = 0;
+    let totalDeletions = 0;
+
+    const fileEntries: FileIndexEntryV4[] = [];
+    const fileChangesMap = new Map<string, { change: FileChangeV4; diffContent: string }>();
+
+    const kindCounts: Record<string, number> = {};
+    const filesByTag = new Map<string, string[]>();
+    const importantFileIds: string[] = [];
+    let riskyFilesCount = 0;
+    let overallLevel: RiskLevel = 'none';
+
+    const diffByPath = new Map<string, (typeof parsedDiff.files)[number]>();
+    for (const f of parsedDiff.files) {
+      if (f.oldPath && !diffByPath.has(f.oldPath)) diffByPath.set(f.oldPath, f);
+      if (f.newPath) diffByPath.set(f.newPath, f);
+    }
+
+    projectedDiffstat.forEach((item, idx) => {
+      const fileIndex = idx + 1;
+      const fileIdStr = `file_${String(fileIndex).padStart(4, '0')}`;
+      const originalPath = item.new_path || item.old_path || `file_${fileIndex}`;
+
+      totalAdditions += item.lines_added;
+      totalDeletions += item.lines_removed;
+
+      const isSensitive = SensitiveFilePolicy.isSensitiveFile(originalPath);
+      if (isSensitive) tracker.recordOmittedFile();
+
+      // Find parsed diff file matching this path
+      const matchedDiff = diffByPath.get(originalPath) || {
+        oldPath: item.old_path || null,
+        newPath: item.new_path || originalPath,
+        status: item.status as any,
+        isBinary: false,
+        additions: item.lines_added,
+        deletions: item.lines_removed,
+        hunks: [],
+        headerLines: []
+      };
+
+      const classification = ChangeClassifier.classify(matchedDiff);
+      const risk = RiskAnalyzer.analyze(matchedDiff, classification);
+      // Names and signatures are raw diff text: scan them like the patch, then cut (a cut token would escape the scan).
+      const symbols = SymbolExtractor.extractSymbols(matchedDiff, classification.kind === 'comment_only').map(s => ({
+        ...s,
+        name: SecretScanner.scanAndRedact(s.name).slice(0, 120),
+        ...(s.signature ? { signature: SecretScanner.scanAndRedact(s.signature).slice(0, 300) } : {})
+      }));
+
+      if (isSensitive) {
+        risk.tags.push('sensitive_configuration');
+        risk.level = 'high';
+        risk.evidence.push('File contains sensitive security configuration');
+      }
+      if (item.conflict) {
+        risk.tags.push('merge_conflict');
+        risk.level = 'high';
+        risk.evidence.push('Bitbucket reports a merge conflict on this file');
+      }
+
+      kindCounts[classification.kind] = (kindCounts[classification.kind] || 0) + 1;
+      risk.tags.forEach(t => filesByTag.set(t, [...(filesByTag.get(t) ?? []), fileIdStr]));
+      if (RISK_ORDER.indexOf(risk.level) > RISK_ORDER.indexOf(overallLevel)) overallLevel = risk.level;
+      if (risk.level === 'high' || risk.level === 'critical') {
+        riskyFilesCount++;
+        importantFileIds.push(fileIdStr);
+      }
+
+      const sanitizedPath = PathSanitizer.sanitize(originalPath, privacy.file_path_mode, fileIdStr);
+
+      fileEntries.push({
+        id: fileIdStr,
+        path: sanitizedPath,
+        old_path: item.old_path ? PathSanitizer.sanitize(item.old_path, privacy.file_path_mode, fileIdStr) : null,
+        language: this.getLanguageForPath(originalPath),
+        status: item.status as any,
+        additions: item.lines_added,
+        deletions: item.lines_removed,
+        change_kind: classification.kind,
+        risk_tags: risk.tags,
+        detail_ref: `files/${fileIdStr}/change.json`
+      });
+
+      // Construct file patch.diff text. Header lines ("diff --git a/<path>", "--- a/<path>") carry the
+      // real paths: rewrite them to the sanitized form so file_path_mode holds for patches too.
+      const pathPairs: Array<[string, string]> = [[originalPath, sanitizedPath]];
+      if (item.old_path && item.old_path !== originalPath) pathPairs.push([item.old_path, PathSanitizer.sanitize(item.old_path, privacy.file_path_mode, fileIdStr)]);
+      // Longest first: when one path is a suffix of the other, replacing the short one first corrupts the long one.
+      pathPairs.sort((a, b) => b[0].length - a[0].length);
+      const headerLines = matchedDiff.headerLines.map(line => pathPairs.reduce((l, [real, safe]) => l.split(real).join(safe), line));
+      let patchDiff = headerLines.join('\n') + '\n';
+      for (const hunk of matchedDiff.hunks) {
+        patchDiff += hunk.header + '\n';
+        for (const line of hunk.lines) {
+          const prefix = line.type === 'add' ? '+' : line.type === 'delete' ? '-' : ' ';
+          patchDiff += prefix + line.content + '\n';
+        }
+      }
+      patchDiff = SecretScanner.scanAndRedact(patchDiff, tracker);
+
+      const fileChange: FileChangeV4 = {
+        schema_version: '4.0',
+        file_id: fileIdStr,
+        classification: {
+          kind: classification.kind,
+          functional_change: classification.functionalChange,
+          confidence: classification.confidence,
+          evidence: classification.evidence
+        },
+        symbols,
+        risk,
+        patch_ref: 'patch.diff',
+        context_ref: null,
+        redaction_result: {
+          scanned: true,
+          content_modified: isSensitive
+        }
+      };
+
+      fileChangesMap.set(fileIdStr, { change: fileChange, diffContent: patchDiff });
+    });
+
+    // Primary Kind Calculation
+    let primaryKind = 'functional_logic';
+    let maxCount = 0;
+    for (const [k, count] of Object.entries(kindCounts)) {
+      if (count > maxCount) {
+        maxCount = count;
+        primaryKind = k;
+      }
+    }
+
+    const fetchWarning = rawRev.warnings.length > 0 ? SecretScanner.scanAndRedact(rawRev.warnings.join('; ')) : null;
+    const section = (status: 'complete' | 'partial' | 'failed', items: number) => ({
+      status,
+      truncated: status === 'partial',
+      items_fetched: items,
+      warning: status === 'complete' ? null : fetchWarning
+    });
+
+    const coverageData: PRCoverageV4 = {
+      schema_version: '4.0',
+      sections: {
+        metadata: section(rawRev.coverage.metadata, 1),
+        commits: section(rawRev.coverage.commits, projectedCommits.length),
+        diffstat: section(rawRev.coverage.diffstat, projectedDiffstat.length),
+        diff: section(rawRev.coverage.diff, parsedDiff.files.length),
+        file_analysis: { status: 'complete', truncated: false, items_fetched: fileEntries.length, warning: null },
+        symbols: { status: 'complete', truncated: false, items_fetched: Array.from(fileChangesMap.values()).reduce((sum, f) => sum + f.change.symbols.length, 0), warning: null },
+        comments: { status: 'not_fetched', truncated: false, items_fetched: 0, warning: null },
+        ci: { status: 'not_fetched', truncated: false, items_fetched: 0, warning: null },
+        related_context: { status: 'not_fetched', truncated: false, items_fetched: 0, warning: null }
+      }
+    };
+
+    const manifestData = {
+      title: sanitizedTitle,
+      description: sanitizedDesc,
+      state: projectedMeta.state || 'OPEN',
+      is_draft: Boolean(projectedMeta.draft),
+      source_branch: clean(projectedMeta.source.branch.name),
+      target_branch: clean(projectedMeta.destination.branch.name),
+      source_commit: rawRev.sourceHash,
+      target_commit: rawRev.destinationHash,
+      ticket_id: ticketId !== 'N/A' ? ticketId : null,
+      change_summary: {
+        total_files: fileEntries.length,
+        total_additions: totalAdditions,
+        total_deletions: totalDeletions,
+        primary_kind: primaryKind,
+        kind_counts: kindCounts
+      },
+      risk_summary: {
+        overall_level: overallLevel,
+        total_risk_tags: [...filesByTag.keys()],
+        risky_files_count: riskyFilesCount,
+        reasons: [...filesByTag].map(([tag, ids]) => `${tag}: ${ids.slice(0, 5).join(', ')}${ids.length > 5 ? ` (+${ids.length - 5})` : ''}`)
+      },
+      stats: {
+        files_changed: fileEntries.length,
+        commits_count: Array.isArray(rawRev.commits) ? rawRev.commits.length : 0,
+        commits_shown: projectedCommits.length
+      },
+      important_file_ids: importantFileIds,
+      index_refs: {
+        files_index: 'files.index.jsonl',
+        commits: 'commits.jsonl',
+        coverage: 'coverage.json'
+      },
+      redaction_summary: {
+        scanned: true,
+        redacted_items_count: tracker.getReport(privacy.mode).redacted_values
+      },
+      analyzer_version: '4.0.0',
+      ...this.diffAgainstActive(workspace, repoSlug, prId, rawRev, fileEntries, fileChangesMap)
+    };
+
+    // The sanitized subjects, never the raw ones (they only fed ticket detection before).
+    const commitsJsonl = projectedCommits.map((c, i) => JSON.stringify({ hash: c.hash, subject: commitSubjects[i] }));
+
+    const result = RevisionWriter.writeRevision(
+      workspace,
+      repoSlug,
+      prId,
+      rawRev.sourceHash,
+      rawRev.destinationHash,
+      manifestData,
+      fileEntries,
+      fileChangesMap,
+      commitsJsonl,
+      coverageData,
+      config.ai_context.company,
+      config.ai_context.root,
+      storageStatus,
+      OutputReader.getPRDirectories(workspace, repoSlug, prId)
+    );
+
+    const cacheKey = `bitbucket:${workspace}:${repoSlug}:${prId}:${rawRev.sourceHash.substring(0, 7)}:${rawRev.destinationHash.substring(0, 7)}:v4`;
+
+    return { cacheKey, manifest: result.manifest, revisionId: result.revisionId };
+  }
+
+  /**
+   * Compares the new revision with the currently active one (if it is a different revision).
+   * Files are matched by sanitized path because file ids are positional and can shift between
+   * revisions; a file counts as changed when it is new or its sanitized patch differs.
+   */
+  private static diffAgainstActive(
+    workspace: string,
+    repoSlug: string,
+    prId: number,
+    rawRev: RawPRRevision,
+    fileEntries: FileIndexEntryV4[],
+    fileChangesMap: Map<string, { change: FileChangeV4; diffContent: string }>
+  ): { changes_since_previous?: NonNullable<PRManifestV4['changes_since_previous']> } {
+    const previous = OutputReader.getActiveRevision(workspace, repoSlug, prId)?.current.active_revision;
+    if (!previous || previous === `rev_${rawRev.sourceHash.substring(0, 7)}_${rawRev.destinationHash.substring(0, 7)}`) return {};
+
+    const oldPatchByPath = new Map<string, string>();
+    for (const entry of OutputReader.getFileIndex(workspace, repoSlug, prId, previous)) {
+      oldPatchByPath.set(entry.path, OutputReader.getFileChange(workspace, repoSlug, prId, entry.id, previous)?.diffContent ?? '');
+    }
+    const changed = fileEntries.filter(e => oldPatchByPath.get(e.path) !== fileChangesMap.get(e.id)?.diffContent).map(e => e.id);
+    const current = new Set(fileEntries.map(e => e.path));
+    const removed = [...oldPatchByPath.keys()].filter(p => !current.has(p));
+    return { changes_since_previous: { previous_revision: previous, changed_file_ids: changed, removed_paths: removed } };
+  }
+
+  private static getLanguageForPath(filePath: string): string {
+    const ext = path.extname(filePath).toLowerCase();
+    switch (ext) {
+      case '.cs': return 'csharp';
+      case '.ts': return 'typescript';
+      case '.js': return 'javascript';
+      case '.py': return 'python';
+      case '.go': return 'go';
+      case '.sql': return 'sql';
+      case '.proto': return 'protobuf';
+      case '.json': return 'json';
+      case '.yaml': case '.yml': return 'yaml';
+      case '.md': return 'markdown';
+      default: return 'text';
+    }
+  }
+}

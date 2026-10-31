@@ -1,0 +1,28 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: ['20.12.0', '22']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: node bin/cli.js prepare
+      - run: npx tsc -p tsconfig.test.json   # src + tests
+      - run: npm test
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t mcp-pr-companion .
+      # Dependencies + build must be ready inside the image; only config is expected to be missing.
+      - run: |
+          docker run --rm -e BITBUCKET_EMAIL=ci@example.com -e BITBUCKET_API_TOKEN=x -e BITBUCKET_REPOSITORY=ci/repo \
+            mcp-pr-companion check

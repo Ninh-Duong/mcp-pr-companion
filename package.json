@@ -1,0 +1,44 @@
+{
+  "name": "mcp-pr-companion",
+  "version": "1.0.0",
+  "description": "Read-only MCP server (stdio) that turns Bitbucket Cloud pull requests into privacy-sanitized, paged context for AI agents",
+  "main": "dist/mcp/server.js",
+  "bin": {
+    "mcp-pr-companion": "bin/cli.js"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=20.12"
+  },
+  "scripts": {
+    "start": "node bin/cli.js server",
+    "cmd": "node bin/cli.js cmd",
+    "mcp-pr-companion": "node bin/cli.js generate-all",
+    "healthcheck": "node bin/cli.js check",
+    "prepare-app": "node bin/cli.js prepare",
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc",
+    "dev": "tsx --env-file=.env src/mcp/server.ts",
+    "test": "node tests/run.mjs"
+  },
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "bitbucket",
+    "pull-request",
+    "code-review",
+    "ai-agent"
+  ],
+  "author": "mcp-pr-companion contributors",
+  "license": "MIT",
+  "dependencies": {
+    "@inquirer/prompts": "^8.5.2",
+    "@modelcontextprotocol/sdk": "^1.6.0",
+    "p-limit": "^7.3.1",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

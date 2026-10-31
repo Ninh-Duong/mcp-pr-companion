@@ -1,0 +1,39 @@
+# Credentials & personal data (NEVER COMMIT)
+# All settings live in .env; only the empty template .env.example is tracked.
+.env
+.env.*
+*.env
+!.env.example
+*.pem
+*.key
+# Legacy local config files from older versions (may contain app passwords)
+config.json
+config.*.json
+session.json
+
+# Local runtime storage (opaque-id salt, caches)
+.mcp-pr-companion/
+
+# Generated AI context packs & data outputs
+ai-context/
+temp/
+scratch/
+
+# Logs & debug traces
+Logs/
+logs/
+*.log
+
+# Dependencies & build artifacts (recreated by bin/cli.js)
+node_modules/
+dist/
+.build/
+.cache/
+
+# OS & editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.suo
+*.user
