@@ -173,3 +173,26 @@ assert.match(fs.readFileSync(path.join(fixture, 'Logs', 'mcp-server.log'), 'utf8
 assert.equal(fs.readFileSync(hubFile, 'utf8').includes(hubToken), true, 'the hub file is never rewritten');
 fs.rmSync(outside, { recursive: true, force: true });
 console.log('  ✓ launcher: CENTRAL_CONFIG_PATH priority, empty = unset, relative path, fallback warnings');
+
+// Without credentials the server still starts and lists its tools; the tools then report what is missing,
+// so the Hub can tell "credentials not set" from a real failure. It writes no .env and prints no value.
+fs.rmSync(path.join(fixture, '.env'), { force: true });
+const bareMessages = [
+  { id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'launcher-test', version: '0' } } },
+  { method: 'notifications/initialized' },
+  { id: 2, method: 'tools/list' },
+  { id: 3, method: 'tools/call', params: { name: 'check_bitbucket_connection', arguments: {} } }
+];
+const bare = spawnSync(process.execPath, ['bin/cli.js', 'server'], {
+  cwd: fixture, env: { ...baseEnv, NODE_OPTIONS: '--require=./no-network.cjs' }, encoding: 'utf8', timeout: 60_000,
+  input: bareMessages.map(message => JSON.stringify({ jsonrpc: '2.0', ...message })).join('\n') + '\n'
+});
+const bareById = new Map(bare.stdout.trim().split('\n').map(line => JSON.parse(line)).map(message => [message.id, message]));
+assert.equal(bare.status, 0, 'the server starts and exits cleanly without credentials');
+assert.equal(bareById.get(2).result.tools.length, 10, 'tools are listed without credentials');
+assert.equal(bareById.get(3).result.isError, true, 'the check tool fails instead of the launcher');
+assert.match(bareById.get(3).result.content[0].text, /No Bitbucket credentials/);
+assert.match(bare.stderr, /Warning: BITBUCKET_EMAIL, BITBUCKET_API_TOKEN not set/);
+assert.ok(!fs.existsSync(path.join(fixture, '.env')), 'the server never creates .env');
+assert.ok(!fs.existsSync(path.join(fixture, 'network-attempted')), 'no network use without credentials');
+console.log('  ✓ launcher: the server starts without credentials and its tools report them missing');

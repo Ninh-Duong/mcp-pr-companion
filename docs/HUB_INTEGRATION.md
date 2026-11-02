@@ -102,7 +102,7 @@ The terminal command `node bin/cli.js sync <open|draft|merged|declined|all>` syn
 
 | Symptom (hub `logs/mcp-hub.jsonl` / child `Logs/mcp-server.log`) | Fix |
 |---|---|
-| `server.connect.failed` and `[LAUNCHER] … Fill in BITBUCKET_… in .env or the Hub's bitbucket block` | Fill the hub's `bitbucket` block or `.env` in this repo |
+| Tool result `No Bitbucket credentials: set BITBUCKET_EMAIL and BITBUCKET_API_TOKEN …` (the server itself starts without credentials; `[LAUNCHER] … Warning: BITBUCKET_… not set`) | Fill the hub's `bitbucket` block or `.env` in this repo; the hub smoke reports this as a warning, not a failure |
 | `[LAUNCHER] … Warning: cannot read the Hub config (CENTRAL_CONFIG_PATH)` or `… has no "bitbucket" block` | Fix the hub file (path, JSON) or its `bitbucket` block; until then `.env` is used |
 | `[LAUNCHER] … npm ci failed` / `Build failed` | Run `node bin/cli.js prepare` in this repo and read the output |
 | Tool result `Error: PR is not synced yet…` | Call `pr__get_pr_context_pack` first |

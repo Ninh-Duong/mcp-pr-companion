@@ -3,7 +3,8 @@
 //   1. Node.js satisfies package.json "engines"
 //   2. node_modules matches package-lock.json   (otherwise: npm ci)
 //   3. dist/ matches the current sources        (otherwise: npm run build)
-//   4. the required settings are present         (otherwise: create .env from .env.example and stop)
+//   4. the required settings are present         (otherwise: create .env from .env.example and stop;
+//      the MCP server still starts without credentials and its tools report what is missing)
 //      Priority per value: process env > the Hub's "bitbucket" block (CENTRAL_CONFIG_PATH) > .env; empty = unset.
 // Only Node built-ins are used so this runs on a fresh clone. Every message goes to stderr:
 // stdout belongs to the MCP JSON-RPC stream when running the server.
@@ -27,7 +28,7 @@ const ENTRIES = {
 };
 const CREDENTIALS = ['BITBUCKET_EMAIL', 'BITBUCKET_API_TOKEN'];
 const REQUIRED_ENV = {
-  server: CREDENTIALS,
+  server: [], // starts without credentials so the Hub can list its tools; see warnMissingCredentials
   cmd: [...CREDENTIALS, 'BITBUCKET_REPOSITORY'],
   'generate-all': [...CREDENTIALS, 'BITBUCKET_REPOSITORY'],
   sync: [...CREDENTIALS, 'BITBUCKET_REPOSITORY'],
@@ -177,6 +178,12 @@ function ensureBuild() {
   fs.writeFileSync(BUILD_STAMP, sourceHash());
 }
 
+function warnMissingCredentials() {
+  loadConfig();
+  const missing = CREDENTIALS.filter(k => !isSet(k));
+  if (missing.length) log(`Warning: ${missing.join(', ')} not set; tools report an error until they are filled in ${ENV_FILE} or the Hub's bitbucket block.`);
+}
+
 function ensureEnv(command) {
   const env = checkEnv(command);
   if (env.ok) return;
@@ -219,6 +226,7 @@ try {
     log('✓ Dependencies installed and build is up to date.');
     process.exit(0);
   }
+  if (command === 'server') warnMissingCredentials();
   ensureEnv(command);
 } catch (err) {
   log(`✗ ${err.message}`);
