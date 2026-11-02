@@ -215,7 +215,7 @@ Run .\run.cmd check first.
 
 | Message | Resolution |
 |---|---|
-| Fill in BITBUCKET_... in .env or the Hub's bitbucket block | Fill in the missing setting in .env or, under mcp-hub, in the Hub's bitbucket block. |
+| Fill in BITBUCKET_... in .env or the Hub's bitbucket block | Fill in the missing setting in .env or, under mcp-hub, in the Hub's bitbucket block. (`cmd`, `sync`, `generate-all` and `check` stop with this; the MCP server still starts and its tools answer `No Bitbucket credentials`.) |
 | Email or API token invalid | Check the account email and token or create a new token. |
 | Repository read access failed | Check BITBUCKET_REPOSITORY and the read:repository scope. |
 | No access: this account cannot read <ws>/<repo> | The configured account cannot read the repository, so it cannot unlock the encrypted cache. |
