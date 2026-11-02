@@ -3,6 +3,7 @@ import path from 'path';
 import { PRManifestV4 } from './schema/manifest.v4.schema.js';
 import { FileIndexEntryV4 } from './schema/file_index.v4.schema.js';
 import { FileChangeV4 } from './schema/file_change.v4.schema.js';
+import { PRCurrentV4 } from './schema/current.v4.schema.js';
 import { RevisionWriter } from './revision.writer.js';
 import { StorePathResolver } from './store-path.resolver.js';
 import { ConfigManager } from '../../config/config.manager.js';
@@ -11,15 +12,7 @@ import { PRStorageStatus, PR_STORAGE_STATUSES } from '../pr-status.js';
 
 export interface ActiveRevisionResult {
   prDir: string;
-  current: {
-    active_revision: string;
-    updated_at?: string;
-    generated_at?: string;
-    source_commit?: string;
-    source_hash?: string;
-    target_commit?: string;
-    destination_hash?: string;
-  };
+  current: PRCurrentV4;
   manifest: PRManifestV4 | null;
 }
 

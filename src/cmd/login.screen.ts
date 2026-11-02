@@ -22,10 +22,10 @@ export class LoginScreen {
   }
 
   /**
-   * Authenticates with the credentials from .env (BITBUCKET_EMAIL, BITBUCKET_API_TOKEN,
+   * Authenticates with the credentials from .env or the Hub's bitbucket block (BITBUCKET_EMAIL, BITBUCKET_API_TOKEN,
    * BITBUCKET_REPOSITORY). Never asks for credentials; when several repositories are
    * configured and none is given, lets the user pick one of them. On failure prints
-   * what to fix in .env.
+   * what to fix in .env or the Hub's bitbucket block.
    */
   static async executeLoginFlow(repository?: string): Promise<RuntimeSession | null> {
     this.displayHeader();
@@ -37,7 +37,7 @@ export class LoginScreen {
       repositories.length === 0 && 'BITBUCKET_REPOSITORY'
     ].filter(Boolean);
     if (missing.length > 0) {
-      console.error(`Missing configuration in .env: ${missing.join(', ')}`);
+      console.error(`Missing configuration (.env or the Hub's bitbucket block): ${missing.join(', ')}`);
       return null;
     }
 
@@ -67,7 +67,7 @@ export class LoginScreen {
     }
 
     console.error(`\nAuthentication failed: ${authResult.error}`);
-    console.error('Fix BITBUCKET_EMAIL / BITBUCKET_API_TOKEN / BITBUCKET_REPOSITORY in .env and run again.');
+    console.error(`Fix BITBUCKET_EMAIL / BITBUCKET_API_TOKEN / BITBUCKET_REPOSITORY in .env or the Hub's bitbucket block and run again.`);
     this.displayScopeBanner();
     console.error(`Log: ${authResult.logFilePath}\n`);
     return null;

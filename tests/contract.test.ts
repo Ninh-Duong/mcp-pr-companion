@@ -2,6 +2,7 @@ import { PRManifestV4Schema } from '../src/core/output/schema/manifest.v4.schema
 import { FileIndexEntryV4Schema } from '../src/core/output/schema/file_index.v4.schema.js';
 import { FileChangeV4Schema } from '../src/core/output/schema/file_change.v4.schema.js';
 import { PRCoverageV4Schema } from '../src/core/output/schema/coverage.v4.schema.js';
+import { PRCurrentV4Schema } from '../src/core/output/schema/current.v4.schema.js';
 
 function runContractTests() {
   console.log('🧪 [CONTRACT TEST] Running Runtime Schema Validation Tests...');
@@ -131,6 +132,29 @@ function runContractTests() {
 
   PRCoverageV4Schema.parse(sampleCoverage);
   console.log('  ✅ PRCoverageV4Schema parsed successfully');
+
+  // 5. current.json Contract Test: freshness_checked_at is additive and optional
+  const sampleCurrent = {
+    active_revision: 'rev_abc1234_def9876',
+    updated_at: '2026-01-01T00:00:00.000Z',
+    generated_at: '2026-01-01T00:00:00.000Z',
+    source_commit: 'abc123456789',
+    source_hash: 'abc123456789',
+    target_commit: 'def987654321',
+    destination_hash: 'def987654321',
+    context_path: 'context.md',
+    files_summary_path: 'files.md',
+    actions_path: 'actions.md',
+    manifest_path: 'manifest.json',
+    active_revision_path: 'revisions/rev_abc1234_def9876',
+    ai_reading_mode: 'skim'
+  };
+  PRCurrentV4Schema.parse(sampleCurrent);
+  const stamped = PRCurrentV4Schema.parse({ ...sampleCurrent, freshness_checked_at: '2026-01-01T00:01:00.000Z' });
+  if (stamped.freshness_checked_at !== '2026-01-01T00:01:00.000Z') throw new Error('freshness_checked_at must round-trip');
+  if (PRCurrentV4Schema.safeParse({ ...sampleCurrent, freshness_checked_at: 1 }).success) throw new Error('freshness_checked_at must be a string');
+  if (PRCurrentV4Schema.safeParse({ updated_at: 'x' }).success) throw new Error('active_revision is required');
+  console.log('  ✅ PRCurrentV4Schema parsed successfully (freshness_checked_at optional)');
 
   console.log('🎉 [CONTRACT TEST] All schemas passed validation!\n');
 }

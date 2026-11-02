@@ -1,4 +1,4 @@
-import { BitbucketCollector } from '../bitbucket/bitbucket.collector.js';
+import { BitbucketCollector, PRHead } from '../bitbucket/bitbucket.collector.js';
 import { AccessGate } from '../auth/access-gate.js';
 import { DataStore } from '../storage/data.store.js';
 import { PRGenerationJobState, GenerationStage } from './generation.types.js';
@@ -38,9 +38,10 @@ export class GenerationJob {
 
       // Unless forced, skip PRs whose stored revision still matches the PR's head commits.
       const active = forceRefresh ? null : DataStore.getActiveRevision(workspace, repoSlug, prId);
+      let head: PRHead | undefined;
       if (active) {
         updateStage('metadata', 15);
-        const head = await collector.getHeadCommits(workspace, repoSlug, prId);
+        head = await collector.getHeadCommits(workspace, repoSlug, prId);
         if (head.source === active.current.source_commit &&
           head.destination === active.current.target_commit &&
           head.state.toUpperCase() === active.manifest?.state.toUpperCase() &&
@@ -53,7 +54,7 @@ export class GenerationJob {
       }
 
       updateStage('diff_download', 30);
-      const rawRev = await collector.collect(workspace, repoSlug, prId);
+      const rawRev = await collector.collect(workspace, repoSlug, prId, {}, head?.metadata); // reuse the metadata just checked
 
       updateStage('analysis', 80);
       DataStore.saveRevision(workspace, repoSlug, prId, rawRev);
