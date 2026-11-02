@@ -4,6 +4,7 @@ import { PRManifestV4 } from './schema/manifest.v4.schema.js';
 import { FileIndexEntryV4 } from './schema/file_index.v4.schema.js';
 import { FileChangeV4 } from './schema/file_change.v4.schema.js';
 import { PRCoverageV4 } from './schema/coverage.v4.schema.js';
+import { PRCurrentV4, PRCurrentV4Schema } from './schema/current.v4.schema.js';
 import { RevisionValidator } from './revision.validator.js';
 import { TextNormalizer } from '../../utils/text.normalizer.js';
 import { StorePathResolver } from './store-path.resolver.js';
@@ -132,7 +133,7 @@ export class RevisionWriter {
       writeSecure(path.join(prDir, 'manifest.json'), JSON.stringify(fullManifest, null, 2), scope);
 
       // 8. current.json is the commit point: written last, only after validation and the pack succeeded.
-      const currentData = {
+      const currentData: PRCurrentV4 = {
         active_revision: revisionId,
         updated_at: nowIso,
         generated_at: nowIso,
@@ -169,6 +170,27 @@ export class RevisionWriter {
       }
       throw err;
     }
+  }
+
+  /**
+   * Stamps current.json with the time of a successful freshness check (additive field
+   * freshness_checked_at). The pointer is rewritten atomically with every other field unchanged, and
+   * only while it still names the revision the caller checked, so a sync published meanwhile is kept.
+   * ponytail: the re-read and the rename are not one step across processes; a sync published in that
+   * window is reverted to the previous, still retained revision, and the next freshness check re-syncs it.
+   */
+  static recordFreshnessCheck(
+    prDir: string,
+    scope: { workspace: string; repoSlug: string; prId: number },
+    checked: PRCurrentV4,
+    checkedAt = new Date().toISOString()
+  ): boolean {
+    const file = path.join(prDir, 'current.json');
+    if (!fs.existsSync(file)) return false;
+    const current = PRCurrentV4Schema.parse(JSON.parse(readSecure(file)));
+    if (current.active_revision !== checked.active_revision || current.updated_at !== checked.updated_at) return false;
+    writeSecure(file, JSON.stringify(PRCurrentV4Schema.parse({ ...current, freshness_checked_at: checkedAt }), null, 2), scope);
+    return true;
   }
 
   // ponytail: fixed keep-count by mtime; make it configurable if anyone needs older revisions.

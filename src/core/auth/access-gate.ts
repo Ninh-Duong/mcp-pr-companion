@@ -2,7 +2,7 @@ import { BitbucketCollector } from '../bitbucket/bitbucket.collector.js';
 
 /**
  * Releases the key material for a repository's ai-context files only after a live check:
- * the .env credentials authenticate, pass ALLOWED_EMAILS, and can read that repository.
+ * the configured credentials (.env or the Hub's bitbucket block) authenticate, pass ALLOWED_EMAILS, and can read that repository.
  * The material (the repository UUID) lives in memory only, for TTL_MS, and is never logged or written.
  */
 export class AccessGate {

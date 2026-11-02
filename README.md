@@ -129,7 +129,7 @@ The MCP tools (prefixed with pr__ when exposed through mcp-hub) are:
 
 | Tool | Purpose |
 |---|---|
-| get_pr_context_pack | Get the PR context pack. Start here; it syncs when missing, when commits/state/draft status changed, or when directory migration is pending. Set refresh=true to force a sync. |
+| get_pr_context_pack | Get the PR context pack. Start here; it syncs when missing, when commits/state/draft status changed, or when directory migration is pending. Bitbucket is re-checked at most once per FRESHNESS_TTL_SECONDS (default 120). Set refresh=true to force a sync. |
 | search_pr_files | Find files by path, language, status, change kind, or risk tag. |
 | get_pr_file_context | Read one file summary and a paged sanitized diff. |
 | get_pr_file_changes | Get a file's classification, risk, up to 50 symbols, and an optional diff page as JSON. |
@@ -137,10 +137,10 @@ The MCP tools (prefixed with pr__ when exposed through mcp-hub) are:
 | list_synced_prs | List locally synced PRs, optionally filtered by repository and open, draft, merged, or declined status. Results are paged. |
 | get_pr_comments | Read sanitized live review comments, including inline comments with file_id when available and whether the author is an app or person. Each comment is capped at 4,000 characters. |
 | list_my_open_prs | List your open PRs and their pr_url for a configured repository or all configured repositories. |
-| sync_my_open_prs | Sync your open PRs for one or all configured repositories. This existing tool retains its open-only behavior. |
-| check_bitbucket_connection | Check live Bitbucket credentials and the account allowlist. |
+| sync_my_open_prs | Sync your open PRs for one or all configured repositories. PRs whose cached revision matches the listing cost no extra request. This existing tool retains its open-only behavior. |
+| check_bitbucket_connection | Check live Bitbucket credentials and the account allowlist; also reports where each setting group came from (env, hub, local, unset). |
 
-The context pack includes live approval and build counts, plus open review thread summaries. These are fetched on each pack read and are not stored in the encrypted revision; comment text is capped at 4,000 characters and build statuses are limited to two pages.
+The context pack includes live approval and build counts, plus open review thread summaries. These are fetched on each pack read and are not stored in the encrypted revision (within the freshness TTL the approvals line reads "not rechecked", because approvals come from the metadata request the TTL skips); comment text is capped at 4,000 characters and build statuses are limited to two pages.
 
 To discover cached PRs, call list_synced_prs and filter by status. Then use the returned pr_url with get_pr_context_pack or the file tools. Do not read ai-context files directly because they are encrypted.
 
@@ -150,23 +150,25 @@ Run the CLI sync command locally to fetch historical groups, then use list_synce
 
 1. Clone this repository beside mcp-hub: <parent>/mcp-hub and <parent>/mcp-pr-companion. The Hub template runs node bin/cli.js server from the child repository.
 2. Run node bin/cli.js prepare once to install dependencies and build.
-3. Keep credentials in this repository's .env. The Hub does not pass secrets.
+3. Put credentials in the Hub's bitbucket block (the Hub passes its file as CENTRAL_CONFIG_PATH) or in this repository's .env. Per value, process env wins over the Hub block, which wins over .env; empty values count as unset. A missing or broken Hub file logs a warning and .env is used. check and check_bitbucket_connection report where each value group came from (env, hub, local, or unset), never the values.
 4. The Hub exposes child tools with the pr__ prefix.
 
 See [docs/HUB_INTEGRATION.md](docs/HUB_INTEGRATION.md) and the Hub contract at ../mcp-hub/docs/mcps/mcp-pr-companion.md.
 
 ## 4. Configuration
 
-All configuration is stored in .env. See [.env.example](.env.example) for the full list.
+All configuration is stored in .env. Under mcp-hub, the five Bitbucket values below can also come from the Hub's bitbucket block (priority: process env > Hub block > .env > default; empty = unset). See [.env.example](.env.example) for the full list.
 
 | Variable | Required | Purpose |
 |---|---|---|
-| BITBUCKET_EMAIL | Yes | Atlassian account email |
-| BITBUCKET_API_TOKEN | Yes | Read-only Bitbucket API token |
-| BITBUCKET_REPOSITORY | For cmd, generate-all, sync, and check | Comma-separated repository list. generate-all and sync process all configured repositories; `sync` accepts `open`, `draft`, `merged`, `declined`, or `all`. `cmd` lets you choose repositories. The MCP server can start without it when tools receive an explicit repository or PR URL. `list_synced_prs` also uses it when `repository` is omitted. |
-| BITBUCKET_WORKSPACE | No | Default workspace for repository entries without workspace/repo. |
-| ALLOWED_EMAILS | No | Comma-separated account allowlist; empty allows any account with valid repository access. |
+| BITBUCKET_EMAIL | Yes | Atlassian account email. Hub: bitbucket.email. |
+| BITBUCKET_API_TOKEN | Yes | Read-only Bitbucket API token. Hub: bitbucket.api_token. |
+| BITBUCKET_REPOSITORY | For cmd, generate-all, sync, and check | Comma-separated repository list. generate-all and sync process all configured repositories; `sync` accepts `open`, `draft`, `merged`, `declined`, or `all`. `cmd` lets you choose repositories. The MCP server can start without it when tools receive an explicit repository or PR URL. `list_synced_prs` also uses it when `repository` is omitted. Hub: bitbucket.repository. |
+| BITBUCKET_WORKSPACE | No | Default workspace for repository entries without workspace/repo. Hub: bitbucket.workspace. |
+| ALLOWED_EMAILS | No | Comma-separated account allowlist; empty allows any account with valid repository access. Hub: bitbucket.allowed_emails (string or array). |
+| CENTRAL_CONFIG_PATH | No | Set by mcp-hub: path to the Hub's JSON file (relative to this repository). Only its bitbucket block is read; the file is never written. |
 | AUTO_SYNC_ON_START | No | true syncs the account's open PRs in configured repositories in the background. Default: false. |
+| FRESHNESS_TTL_SECONDS | No | Seconds after a successful freshness check during which get_pr_context_pack does not re-check the PR on Bitbucket. 0 checks on every call. Default: 120. |
 | TICKET_PREFIXES | No | Preferred ticket prefixes. Default: WCE-,PROJ-,JIRA-. The tool also detects KEY-123 in branch names or [KEY-123] in titles. |
 | PRIVACY_* | No | Privacy controls for returned and stored PR content. Defaults are safe. |
 | PRIVACY_MAX_COMMIT_SUBJECTS | No | Maximum commit subjects stored and shown per PR. Default: 10; merge commits are excluded. |
@@ -213,7 +215,7 @@ Run .\run.cmd check first.
 
 | Message | Resolution |
 |---|---|
-| Fill in BITBUCKET_... in .env | Fill in the missing setting in .env. |
+| Fill in BITBUCKET_... in .env or the Hub's bitbucket block | Fill in the missing setting in .env or, under mcp-hub, in the Hub's bitbucket block. |
 | Email or API token invalid | Check the account email and token or create a new token. |
 | Repository read access failed | Check BITBUCKET_REPOSITORY and the read:repository scope. |
 | No access: this account cannot read <ws>/<repo> | The configured account cannot read the repository, so it cannot unlock the encrypted cache. |

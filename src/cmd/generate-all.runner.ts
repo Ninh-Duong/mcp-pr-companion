@@ -24,7 +24,7 @@ export async function runGenerateAll(): Promise<number> {
 
   const { repositories } = ConfigManager.credentials();
   if (repositories.length === 0) {
-    console.error('Missing configuration in .env: BITBUCKET_REPOSITORY');
+    console.error(`Missing configuration (.env or the Hub's bitbucket block): BITBUCKET_REPOSITORY`);
     return 1;
   }
 
@@ -35,7 +35,7 @@ export async function runGenerateAll(): Promise<number> {
     summaries.push(summary);
 
     try {
-      // Credentials come from .env; login runs the full capability probe for this repository.
+      // Credentials come from .env or the Hub's bitbucket block; login runs the full capability probe for this repository.
       const session = (await LoginScreen.executeLoginFlow(repository)) && runtimeSession.getSession();
       if (!session) {
         summary.status = 'auth_failed';

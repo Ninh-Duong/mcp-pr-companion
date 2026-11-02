@@ -118,3 +118,58 @@ assert.ok(!fs.existsSync(path.join(fixture, 'network-attempted')), 'startup and 
 assert.ok(!fs.existsSync(path.join(fixture, '.env')), 'dummy environment needs no .env file');
 assert.ok(fs.existsSync(path.join(fixture, 'Logs', 'mcp-server.log')), 'launcher keeps runtime files in its isolated project');
 console.log('  ✓ launcher: package freshness + no-network Hub stdio handshake');
+
+// Hub config (CENTRAL_CONFIG_PATH): process env > Hub "bitbucket" block > .env; empty = unset.
+const baseEnv: NodeJS.ProcessEnv = { ...env };
+for (const key of ['BITBUCKET_EMAIL', 'BITBUCKET_API_TOKEN', 'BITBUCKET_REPOSITORY']) delete baseEnv[key];
+const hubDir = path.join(fixture, 'hub-config');
+fs.mkdirSync(hubDir);
+const hubFile = path.join(hubDir, 'pr.json');
+const hubToken = 'dummy-hub-token';
+fs.writeFileSync(hubFile, JSON.stringify({ bitbucket: {
+  email: 'hub@example.com', api_token: hubToken, workspace: '', repository: 'example/hub-repo', allowed_emails: ['hub@example.com', 'x@example.com']
+} }));
+const check = (extra: NodeJS.ProcessEnv, cwd = fixture) => {
+  const res = spawnSync(process.execPath, [path.join(fixture, 'bin', 'cli.js'), 'check'], {
+    cwd, env: { ...baseEnv, ...extra }, encoding: 'utf8', timeout: 60_000
+  });
+  const config = res.stderr.split('\n').find(line => line.includes('Config:')) || '';
+  return { status: res.status, stderr: res.stderr, config };
+};
+const hubRel = 'hub-config/pr.json';
+
+let hubRun = check({ CENTRAL_CONFIG_PATH: hubRel });
+assert.equal(hubRun.status, 0, hubRun.stderr);
+assert.match(hubRun.config, /credentials: hub, workspace: unset, repository: hub, allowed_emails: hub/, 'hub file fills unset vars');
+assert.ok(!hubRun.stderr.includes(hubToken) && !hubRun.stderr.includes('hub@example.com') && !hubRun.stderr.includes('pr.json'),
+  'check prints source names, never values or the hub file path');
+
+hubRun = check({ CENTRAL_CONFIG_PATH: hubRel, BITBUCKET_API_TOKEN: 'dummy-env-token', BITBUCKET_REPOSITORY: '' });
+assert.match(hubRun.config, /credentials: env, workspace: unset, repository: hub/, 'env beats hub; an empty env var is unset');
+
+const outside = fs.mkdtempSync(path.join(path.dirname(fixture), 'other-cwd-'));
+hubRun = check({ CENTRAL_CONFIG_PATH: hubRel }, outside);
+assert.equal(hubRun.status, 0, 'a relative CENTRAL_CONFIG_PATH resolves against the repo root, not the cwd');
+assert.match(hubRun.config, /credentials: hub/);
+
+fs.writeFileSync(path.join(fixture, '.env'), 'BITBUCKET_EMAIL=local@example.com\nBITBUCKET_API_TOKEN=dummy-local-token\nBITBUCKET_REPOSITORY=example/local\nALLOWED_EMAILS=\n');
+hubRun = check({ CENTRAL_CONFIG_PATH: hubRel, ALLOWED_EMAILS: '' });
+assert.match(hubRun.config, /credentials: hub, workspace: unset, repository: hub, allowed_emails: hub/, 'hub beats .env');
+
+fs.writeFileSync(path.join(hubDir, 'empty.json'), JSON.stringify({ bitbucket: { email: '', api_token: '', repository: '' } }));
+hubRun = check({ CENTRAL_CONFIG_PATH: 'hub-config/empty.json', BITBUCKET_API_TOKEN: '' });
+assert.equal(hubRun.status, 0, hubRun.stderr);
+assert.match(hubRun.config, /credentials: local, workspace: unset, repository: local, allowed_emails: unset/, 'empty hub values fall back to .env');
+
+for (const [name, contents] of [['missing.json', null], ['broken.json', '{ not json'], ['other.json', '{"seq": {}}']] as const) {
+  if (contents !== null) fs.writeFileSync(path.join(hubDir, name), contents);
+  hubRun = check({ CENTRAL_CONFIG_PATH: `hub-config/${name}` });
+  assert.equal(hubRun.status, 0, `${name}: falls back to .env`);
+  assert.match(hubRun.stderr, /Warning: .*Hub config/, `${name}: warns`);
+  assert.ok(!hubRun.stderr.includes(name), `${name}: the warning omits the hub file path`);
+  assert.match(hubRun.config, /credentials: local/);
+}
+assert.match(fs.readFileSync(path.join(fixture, 'Logs', 'mcp-server.log'), 'utf8'), /\[LAUNCHER\].*Warning: cannot read the Hub config/, 'warnings reach the child log');
+assert.equal(fs.readFileSync(hubFile, 'utf8').includes(hubToken), true, 'the hub file is never rewritten');
+fs.rmSync(outside, { recursive: true, force: true });
+console.log('  ✓ launcher: CENTRAL_CONFIG_PATH priority, empty = unset, relative path, fallback warnings');
