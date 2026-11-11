@@ -14,6 +14,8 @@ Everything this project stores under `ai-context/` is encrypted. Opening the fol
 
 The canonical path is `ai-context/[<AI_CONTEXT_COMPANY>/]<workspace>/<repo>/<open|draft|merged|declined>/pr_<id>/`. The directory records the state at the last successful sync. Bitbucket draft PRs have state `OPEN` and are stored under `draft`; `open` contains only non-draft PRs. There is no `all` directory. During migration, readers also search the previous status-less layout and legacy roots.
 
+The PR directory also contains `live-review/`, a separately versioned encrypted comment sidecar outside `revisions/rev_*`. It holds a pointer, a versioned index and full sanitized comments JSONL for the latest complete snapshot, plus `last-attempt.json` for the most recent fetch outcome and sanitized warnings. Failed or partial collection never replaces the last complete pointer. Status migration copies the newest complete snapshot and its matching refresh metadata through `readSecure`/`writeSecure`; a failed migration leaves the source readable. Approval and build statuses are never stored in the sidecar. Display names are persisted/returned only when `PRIVACY_REMOVE_AUTHOR=false`; the default remains true.
+
 ## 2. File format (`src/core/storage/secure-file.ts`)
 
 ```
