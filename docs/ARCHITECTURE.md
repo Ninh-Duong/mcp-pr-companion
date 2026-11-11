@@ -21,6 +21,8 @@ flowchart LR
     DS --> RW[RevisionWriter]
     RW --> FS[(ai-context/)]
     P -->|reads| FS
+    P -->|refreshes comments independently| BB
+    P -->|encrypted review sidecar| FS
 ```
 
 The MCP server and the CLI share one pipeline and one on-disk store. Neither keeps PR data in memory between calls.
@@ -47,6 +49,12 @@ ai-context/[<AI_CONTEXT_COMPANY>/]<workspace>/<repo>/<open|draft|merged|declined
 ├── actions.md              ← coverage per section
 ├── manifest.json           ← copy of the active manifest (backward compatibility)
 ├── files/file_NNNN.md      ← what get_pr_file_context returns
+├── live-review/
+│   ├── current.json        ← pointer to the last complete review snapshot
+│   ├── last-attempt.json   ← encrypted refresh outcome and sanitized warnings
+│   └── snapshots/<id>/
+│       ├── index.json      ← versioned metadata, completeness and warnings
+│       └── comments.jsonl  ← full sanitized comments, one per line
 └── revisions/rev_<src7>_<dst7>/
     ├── manifest.json
     ├── files.index.jsonl   ← what search_pr_files filters
@@ -59,7 +67,7 @@ Other local state, all git-ignored: `Logs/mcp-server.log` (MCP and launcher log)
 
 The status directory records the state at the last successful sync. Draft is a separate group from open, even though Bitbucket represents both as state `OPEN`; `open` means an open, non-draft PR. There is no `all` directory. `OutputReader` also finds the old status-less layout and legacy roots during migration.
 
-Freshness compares source and target commit hashes from `current.json` and the state and draft flag from the active revision manifest. `current.json` also records `freshness_checked_at`, the time of the last check that found the revision current (schema: `src/core/output/schema/current.v4.schema.ts`). Live approvals and build statuses are appended to the MCP context pack at read time and are not encrypted into the revision.
+Freshness compares source and target commit hashes from `current.json` and the state and draft flag from the active revision manifest. `current.json` also records `freshness_checked_at`, the time of the last check that found the revision current (schema: `src/core/output/schema/current.v4.schema.ts`). The default `FRESHNESS_TTL_SECONDS=0` checks every PR-specific read; matching metadata reuses the current revision without fetching commits/diffstat/diff. Live approvals and build statuses are appended to the MCP context pack at read time and are not stored. Comments are fetched on every context-pack report, independent of revision commits; full sanitized bodies are stored in the separate encrypted sidecar. Incomplete refreshes write only encrypted attempt metadata and never advance `current.json` to partial comment data.
 
 ## 4. Write path and atomicity
 
@@ -75,6 +83,8 @@ Every file below is written with `writeSecure` and read with `readSecure` (`src/
 7. After this new revision is valid, migrate retained revision directories from legacy or stale status paths into the canonical status directory. Same-volume moves rename revisions after checking their encrypted files. Across volumes, each file is copied through `readSecure` / `writeSecure` into destination-side staging and compared by decrypted content before publication; revision directory modification times are preserved for retention sorting. A new validated revision replaces an old revision with the same ID. A failed migration or conflicting destination leaves the old directory readable for a later retry.
 8. Prune: keep the active revision and the 4 newest others (`RevisionWriter.KEEP_REVISIONS = 5`).
 
+Review snapshots are staged and validated independently from revisions. Their index, comments JSONL, pointer, and latest-attempt metadata all use `writeSecure`/`readSecure`. Only a complete comment collection can advance `live-review/current.json`; incomplete collection records a sanitized warning in `last-attempt.json` and preserves the previous pointer. When PR status changes, the migration carries the newest complete review snapshot and its matching latest attempt metadata before removing the old status directory.
+
 An unchanged freshness check rewrites `current.json` with every field kept and `freshness_checked_at` set (`RevisionWriter.recordFreshnessCheck`, atomic through `writeSecure`). It writes only while the pointer still names the revision that was checked, so a newer publish is not reverted; the revision directories are never touched, so retention order and migration comparisons are unaffected.
 
 A crash before publishing `current.json` leaves the previous active revision in place. A crash during status migration leaves the old directory readable. Because freshness checks include storage placement, the next ordinary successful sync retries migration even when the PR commits, state, and draft flag are unchanged. Old revisions are still subject to the five-revision retention limit.
@@ -86,10 +96,10 @@ sequenceDiagram
     participant Agent
     participant S as PRContextService
     participant BB as Bitbucket
-    Agent->>S: get_pr_context_pack(pr_url)
+    Agent->>S: PR-specific read(pr_url)
     alt no local revision, or refresh=true
         S->>BB: full collect
-    else checked within FRESHNESS_TTL_SECONDS and no migration pending
+    else FRESHNESS_TTL_SECONDS > 0 and last check is recent
         S->>S: no request; approvals "not rechecked"
     else local revision exists
         S->>BB: GET pullrequest (metadata only)
@@ -99,14 +109,18 @@ sequenceDiagram
             S-->>Agent: "Note: could not check…" + cached pack
         end
     end
-    S-->>Agent: context.md
+    opt context-pack report
+        S->>BB: fetch all comment pages
+        S->>S: validate and publish complete encrypted review snapshot
+    end
+    S-->>Agent: current local data + report review section
 ```
 
-- `PRContextService.sync` keeps one in-flight promise per PR, so parallel calls (refresh or not) share a fetch. A sync reuses the metadata response of the freshness check (`collect(..., metadata)`), and the pack's live review status reuses the metadata the sync was built from, so one pack call makes at most one PR metadata request.
-- The freshness TTL (`FRESHNESS_TTL_SECONDS`, default 120, 0 = off) starts at the later of `current.json` `updated_at` and `freshness_checked_at`. A clock that moved back never extends it.
-- File tools and `list_synced_prs` never download PR details. Like every tool that reads local encrypted data, they first pass the repository access check (`AccessGate.unlock`: one Bitbucket request per repository, cached 60 s), then read the active revision or its status metadata. They never migrate directories.
-- `get_pr_comments` and `list_my_open_prs` fetch live data and store nothing. `get_pr_comments` then unlocks the repo to map inline comments to cached file ids. Comments change without new commits, so a commit-hash freshness check cannot cover them.
-- `get_pr_context_pack` also fetches approvals, build statuses, and comment threads live. It counts approvals without names, keeps the newest build result per pipeline key, counts only statuses for the current source commit, and labels older statuses separately. It summarizes at most 10 file groups. Build status pagination is limited to two pages and partial results are labeled. Each full comment is sanitized and capped at 4,000 characters; the file changes tool returns at most 50 symbols. The pack points to `get_pr_comments` only for file groups beyond the first 10, not for threads it summarizes. Comments and statuses are never cached (invariant 5).
+- `PRContextService.sync` keeps one in-flight promise per PR, so concurrent full syncs share a fetch. The check's metadata is reused by `collect(..., metadata)` when a revision changed.
+- The freshness TTL (`FRESHNESS_TTL_SECONDS`, default 0) starts at the later of `current.json` `updated_at` and `freshness_checked_at`; zero means every PR-specific read checks metadata. A clock that moved back never extends a nonzero configured TTL.
+- File tools, comments readers, and `get_pr_sync_status` check freshness before returning PR-specific data. Matching metadata avoids a commits/diffstat/diff download; changed or missing revisions sync before results return. All these tools pass the repository access check (`AccessGate.unlock`: one request per repository, cached 60 s).
+- `get_pr_comments` reads the latest complete encrypted snapshot and does not refetch on each page. List rows include a bounded preview and continuation metadata; `get_pr_comment` returns bounded pages of the full sanitized text. `PRIVACY_REMOVE_AUTHOR=true` hides display names; `false` returns sanitized names. No severity field is inferred.
+- Each `get_pr_context_pack` refreshes all comment pages independently of PR commits, including when the PR head check is unavailable. A complete response advances the review pointer; a partial response keeps the previous complete snapshot and reports its age and sanitized warnings. Approval and build status remain live-only; neither is stored in the sidecar. Build status pagination is limited to two pages, partial results are labeled, and only the 10-group summary is placed in the pack.
 - Re-review: when a sync replaces a *different* revision, `DataStore.saveRevision` compares the files against the active revision (by sanitized path and patch content) and stores `changes_since_previous` in the manifest. `context.md` renders it as "Changed since last sync".
 - Transient errors (429/502/503/504) are retried up to twice inside `fetchWithRetry`.
 - A context pack with incomplete commits, diffstat, or diff coverage includes a warning; it does not claim the data is complete. When the author-filtered PR listing returns nothing, an unfiltered fallback reads at most `PRDiscoveryService.FALLBACK_MAX_PAGES` (2) pages and still filters authors locally; a cut-off fallback adds a `Fallback listing incomplete: …` warning (returned as `warnings` by `list_my_open_prs` / `sync_my_open_prs`). An empty failed listing is an error, not an empty result.
