@@ -10,9 +10,9 @@ import { ConfigManager } from '../config/config.manager.js';
 const { version } = JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf-8'));
 
 export const INSTRUCTIONS = `mcp-pr-companion provides sanitized Bitbucket PR context.
-1. Start with get_pr_context_pack(pr_url). It syncs when commits, state, draft flag, or storage location changed (re-checked at most every 120 s by default; refresh=true forces a sync); the pack includes live approvals, build status and open review threads.
+1. Start with get_pr_context_pack(pr_url). PR-specific reads check the latest commits, state, and draft flag by default (FRESHNESS_TTL_SECONDS=0); changed or missing revisions sync before data is returned. refresh=true forces a full sync. The pack includes live approvals, build status and open review threads.
 2. Use search_pr_files(pr_url, filters) to find file ids; read one with get_pr_file_context or get_pr_file_changes. Long text is paged by offset.
-3. Use get_pr_comments(pr_url) only for full comment text, resolved comments, or threads the pack left out; include_resolved=false shows open comments only.
+3. Use get_pr_comments(pr_url) for comment previews and resolved threads; use get_pr_comment(pr_url, comment_id, offset, max_chars, snapshot_id) to read the full sanitized text of a long comment in pages. Pass the returned snapshot_id with each next_offset; if the snapshot changes, restart at offset=0.
 Re-review: open only ids in the pack's "Changed since last sync" section.
 No PR URL? list_my_open_prs finds the account's open PRs; list_synced_prs lists encrypted local PRs by status. sync_my_open_prs syncs open PRs; show its prs as a table.
 The cache is encrypted. Never read ai-context/ files directly. "No access: …" means the access check failed.
@@ -23,8 +23,9 @@ const fileId = z.union([z.string(), z.number().int().nonnegative()]).describe('F
 const offset = z.number().int().min(0).default(0).describe('Character offset to start from. Use next_offset from the previous page.');
 const maxChars = z.number().int().min(500).max(100_000).default(16_000).describe('Maximum characters to return in this page.');
 
-// Reads the local (encrypted) revision; open world because each call first unlocks the repository with a live Bitbucket check.
+// Reads the local revision after a live metadata check; a changed or missing revision can sync/write local cache.
 const LOCAL_READ = { readOnlyHint: true, openWorldHint: true } as const;
+const LOCAL_FRESHNESS_WRITE = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } as const;
 
 type ToolResult = { content: { type: 'text'; text: string }[]; isError?: boolean };
 
@@ -50,7 +51,7 @@ export function createServer(): McpServer {
     {
       title: 'PR context pack',
       description:
-        'START HERE. Returns sanitized PR context, a Read Strategy, and live approvals, build status and open review threads. Syncs when missing, commits/state/draft changed, or status-folder migration is pending. Within FRESHNESS_TTL_SECONDS (default 120) of the last successful check it does not re-check Bitbucket metadata, and approvals read "not rechecked". Cached revisions remain available when Bitbucket is temporarily unreachable.',
+        'START HERE. Returns sanitized PR context, a Read Strategy, and live approvals, build status and open review threads. Checks commits/state/draft on every call by default (FRESHNESS_TTL_SECONDS=0); syncs when missing, changed, or status-folder migration is pending. Cached revisions remain available with a freshness warning when Bitbucket is temporarily unreachable.',
       inputSchema: {
         pr_url: prUrl,
         refresh: z.boolean().default(false).describe('Force a full re-sync even if the cached revision looks current or was checked within the freshness TTL.'),
@@ -66,7 +67,7 @@ export function createServer(): McpServer {
     'search_pr_files',
     {
       title: 'Search PR files',
-      description: 'Lists changed files of a synced PR, filtered by path substring, language, status, change_kind or risk_tag. Returns JSON {total, files}.',
+      description: 'Checks PR freshness and syncs a missing or changed revision before listing changed files, filtered by path substring, language, status, change_kind or risk_tag. Returns JSON {total, files, warning?}.',
       inputSchema: {
         pr_url: prUrl,
         path: z.string().optional().describe('Case-insensitive substring of the sanitized path.'),
@@ -76,7 +77,7 @@ export function createServer(): McpServer {
         risk_tag: z.string().optional().describe('e.g. public_api, auth_security, database_schema, secret_config.'),
         limit: z.number().int().min(1).max(200).default(50)
       },
-      annotations: LOCAL_READ
+      annotations: LOCAL_FRESHNESS_WRITE
     },
     ({ pr_url, ...filters }) => run('search_pr_files', async () => json(await PRContextService.searchPRFiles(pr_url, filters)))
   );
@@ -85,9 +86,9 @@ export function createServer(): McpServer {
     'get_pr_file_context',
     {
       title: 'PR file context',
-      description: 'Markdown for one changed file of a synced PR: path, status, change kind, risk tags and the sanitized diff. Paged by offset/max_chars.',
+      description: 'Checks PR freshness and syncs a missing or changed revision before returning one changed file: path, status, change kind, risk tags and sanitized diff. Paged by offset/max_chars.',
       inputSchema: { pr_url: prUrl, file_id: fileId, offset, max_chars: maxChars },
-      annotations: LOCAL_READ
+      annotations: LOCAL_FRESHNESS_WRITE
     },
     ({ pr_url, file_id, offset, max_chars }) =>
       run('get_pr_file_context', async () => withHint(await PRContextService.getFileContext(pr_url, file_id, offset, max_chars)))
@@ -98,7 +99,7 @@ export function createServer(): McpServer {
     {
       title: 'PR file changes (JSON)',
       description:
-        'JSON for one changed file of a synced PR: classification with evidence, risk level/tags/evidence, up to 50 symbols (symbols_total when capped), and optionally a page of the sanitized patch ({text, total_chars, next_offset}).',
+        'Checks PR freshness and syncs a missing or changed revision before returning JSON for one changed file: classification with evidence, risk level/tags/evidence, up to 50 symbols (symbols_total when capped), and optionally a page of the sanitized patch ({text, total_chars, next_offset}).',
       inputSchema: {
         pr_url: prUrl,
         file_id: fileId,
@@ -106,7 +107,7 @@ export function createServer(): McpServer {
         offset,
         max_chars: maxChars
       },
-      annotations: LOCAL_READ
+      annotations: LOCAL_FRESHNESS_WRITE
     },
     ({ pr_url, file_id, include_patch, offset, max_chars }) =>
       run('get_pr_file_changes', async () => json(await PRContextService.getFileChange(pr_url, file_id, include_patch, offset, max_chars)))
@@ -117,16 +118,34 @@ export function createServer(): McpServer {
     {
       title: 'PR comments',
       description:
-        'Review comments of a Bitbucket PR, fetched live: general and inline (with file_id/path/line when the PR is synced), resolved flag, sanitized text capped at 4,000 chars per comment, and author_kind (app or person). Paged by offset/limit. Returns JSON {total, complete, comments, next_offset}.',
+        'Checks PR freshness, then reads sanitized comments from the latest complete encrypted review snapshot: general and inline (with file_id/path/line when available), resolved flag, bounded text preview, and author_kind (app or person). Paged by offset/limit. If the first refresh was incomplete and no complete snapshot exists, returns complete=false, no rows, and the sanitized warning. Use get_pr_comment for full long comment text.',
       inputSchema: {
         pr_url: prUrl,
         include_resolved: z.boolean().default(true).describe('false = only unresolved threads.'),
         offset: z.number().int().min(0).default(0),
         limit: z.number().int().min(1).max(200).default(50)
       },
-      annotations: { readOnlyHint: true, openWorldHint: true }
+      annotations: LOCAL_FRESHNESS_WRITE
     },
     ({ pr_url, ...opts }) => run('get_pr_comments', async () => json(await PRContextService.getComments(pr_url, opts)))
+  );
+
+  server.registerTool(
+    'get_pr_comment',
+    {
+      title: 'PR comment text page',
+      description: 'Checks PR freshness and reads one comment from the latest complete encrypted review snapshot. Returns sanitized comment metadata and one bounded page of its full text; continue using next_offset and the returned snapshot_id. If the snapshot changes, restart at offset=0.',
+      inputSchema: {
+        pr_url: prUrl,
+        comment_id: z.number().int().nonnegative().describe('Numeric comment id returned by get_pr_comments.'),
+        snapshot_id: z.string().min(1).optional().describe('Snapshot id returned by the first page or get_pr_comments. Required when offset > 0; restart at offset=0 if the snapshot changes.'),
+        offset,
+        max_chars: maxChars
+      },
+      annotations: LOCAL_FRESHNESS_WRITE
+    },
+    ({ pr_url, comment_id, offset, max_chars, snapshot_id }) =>
+      run('get_pr_comment', async () => json(await PRContextService.getComment(pr_url, comment_id, offset, max_chars, snapshot_id)))
   );
 
   server.registerTool(
@@ -196,9 +215,9 @@ export function createServer(): McpServer {
     'get_pr_sync_status',
     {
       title: 'PR sync status',
-      description: 'Whether a PR is cached locally, its revision, PR status, sync time, source/target commits and stats. Does not fetch the PR (only the access check that unlocks the encrypted cache).',
+      description: 'Checks the PR head and returns whether its revision is synced, revision ID, PR status, sync time, source/target commits and stats. Syncs a missing or changed revision before returning.',
       inputSchema: { pr_url: prUrl },
-      annotations: LOCAL_READ
+      annotations: LOCAL_FRESHNESS_WRITE
     },
     ({ pr_url }) => run('get_pr_sync_status', async () => json(await PRContextService.getSyncStatus(pr_url)))
   );

@@ -101,10 +101,14 @@ ai-context/[<AI_CONTEXT_COMPANY>/]<workspace>/<repo>/<open|draft|merged|declined
 ├── actions.md
 ├── manifest.json
 ├── files/file_NNNN.md
+├── live-review/
+│   ├── current.json
+│   ├── last-attempt.json
+│   └── snapshots/<snapshot-id>/{index.json,comments.jsonl}
 └── revisions/rev_<src7>_<dst7>/
 ~~~
 
-The status directory reflects the last successful sync. The active commits are stored in current.json; the PR state and draft flag are stored in the manifest. Retained revision history is migrated from old paths only after a new encrypted revision is valid. If migration is interrupted, the source directory remains readable and the next successful sync retries, even when the PR itself is unchanged. Readers also find legacy directories during migration. The file names and schema v4 layout inside each PR remain unchanged. Files under ai-context are encrypted; AI agents must read them through MCP tools.
+The status directory reflects the last successful sync. The active commits are stored in current.json; the PR state and draft flag are stored in the manifest. Review comments are kept in an independently refreshed encrypted sidecar, outside commit-bound revision folders. A complete snapshot contains sanitized comment records; `last-attempt.json` records only the latest refresh outcome and warnings. Sidecars move with PR status-directory migrations, which preserve the newest complete snapshot. If migration is interrupted, the source directory remains readable and the next successful sync retries, even when the PR itself is unchanged. Readers also find legacy directories during migration. The file names and schema v4 layout inside each revision remain unchanged. Files under ai-context are encrypted; AI agents must read them through MCP tools.
 
 CLI logs are written under Logs/<date>/. MCP server logs are written to Logs/mcp-server.log.
 
@@ -129,22 +133,25 @@ The MCP tools (prefixed with pr__ when exposed through mcp-hub) are:
 
 | Tool | Purpose |
 |---|---|
-| get_pr_context_pack | Get the PR context pack. Start here; it syncs when missing, when commits/state/draft status changed, or when directory migration is pending. Bitbucket is re-checked at most once per FRESHNESS_TTL_SECONDS (default 120). Set refresh=true to force a sync. |
+| get_pr_context_pack | Get the PR context pack. Start here; it checks PR freshness on each call and syncs when missing, when commits/state/draft status changed, or when directory migration is pending. Set refresh=true to force a sync. |
 | search_pr_files | Find files by path, language, status, change kind, or risk tag. |
 | get_pr_file_context | Read one file summary and a paged sanitized diff. |
 | get_pr_file_changes | Get a file's classification, risk, up to 50 symbols, and an optional diff page as JSON. |
 | get_pr_sync_status | Check whether a PR is cached and view its PR status, revision, sync time, and commit hashes. |
 | list_synced_prs | List locally synced PRs, optionally filtered by repository and open, draft, merged, or declined status. Results are paged. |
-| get_pr_comments | Read sanitized live review comments, including inline comments with file_id when available and whether the author is an app or person. Each comment is capped at 4,000 characters. |
+| get_pr_comments | Read paged comments from the latest complete encrypted review snapshot. Each row has a bounded 4,000-character preview and continuation metadata; after an incomplete first fetch it reports `complete=false` with no rows. Use `get_pr_comment` for the full sanitized body. |
+| get_pr_comment | Read a single comment's sanitized full text in bounded pages using `comment_id`, `offset`, and `max_chars`. |
 | list_my_open_prs | List your open PRs and their pr_url for a configured repository or all configured repositories. |
 | sync_my_open_prs | Sync your open PRs for one or all configured repositories. PRs whose cached revision matches the listing cost no extra request. This existing tool retains its open-only behavior. |
 | check_bitbucket_connection | Check live Bitbucket credentials and the account allowlist; also reports where each setting group came from (env, hub, local, unset). |
 
-The context pack includes live approval and build counts, plus open review thread summaries. These are fetched on each pack read and are not stored in the encrypted revision (within the freshness TTL the approvals line reads "not rechecked", because approvals come from the metadata request the TTL skips); comment text is capped at 4,000 characters and build statuses are limited to two pages.
+The context pack checks the latest PR head before returning data and refreshes all comment pages on every report, even when commits are unchanged. Sanitized full comment bodies are stored in the encrypted review sidecar; report summaries show a bounded preview. If a comment fetch is incomplete, the previous complete snapshot stays active and the report identifies its age and the sanitized warning. If the PR metadata check is unavailable, comments are still refreshed independently. Approval and build counts are fetched live and never stored; build statuses are limited to two pages. The companion does not assign severity to review comments; the AI agent interprets their text.
 
-To discover cached PRs, call list_synced_prs and filter by status. Then use the returned pr_url with get_pr_context_pack or the file tools. Do not read ai-context files directly because they are encrypted.
+`PRIVACY_REMOVE_AUTHOR` is `true` by default. Set it to `false` only in a deployment that permits sanitized commenter display names. `author_kind` remains available in either setting.
 
-Run the CLI sync command locally to fetch historical groups, then use list_synced_prs through MCP to browse and read the encrypted cache. list_synced_prs, file readers, and get_pr_sync_status read local cache after a repository access check; they do not fetch PR details or migrate directories. list_my_open_prs and get_pr_comments fetch live data from Bitbucket. get_pr_context_pack checks freshness and can sync; if freshness metadata is unavailable, it shows cached context with a note and skips other live requests. The Hub's pr__sync_my_open_prs tool keeps its existing open-only behavior. AUTO_SYNC_ON_START=true syncs open PRs in the background whenever the MCP server starts.
+To discover cached PRs, call list_synced_prs and filter by status. Then start each report with get_pr_context_pack, which checks current commits/state/draft and refreshes the comment snapshot. Use `get_pr_comments` for bounded comment previews and follow `text_next_offset` with `get_pr_comment` until `next_offset` is `null`. Do not read ai-context files directly because they are encrypted.
+
+Run the CLI sync command locally to fetch historical groups, then use list_synced_prs through MCP to browse the encrypted cache. Every PR-specific read checks the latest head by default (`FRESHNESS_TTL_SECONDS=0`); unchanged revisions avoid another commits/diff download, while changed or missing revisions sync before data is returned. Comment reads use the last complete encrypted snapshot; only a context-pack report refreshes comments from Bitbucket. `list_my_open_prs` discovers open PRs live. If freshness metadata is unavailable, cached revision data is labeled with a warning, and comment refresh is still attempted independently. The Hub's `pr__sync_my_open_prs` tool keeps its existing open-only behavior. `AUTO_SYNC_ON_START=true` syncs open PRs in the background whenever the MCP server starts.
 
 ### Run under mcp-hub
 
@@ -168,9 +175,9 @@ All configuration is stored in .env. Under mcp-hub, the five Bitbucket values be
 | ALLOWED_EMAILS | No | Comma-separated account allowlist; empty allows any account with valid repository access. Hub: bitbucket.allowed_emails (string or array). |
 | CENTRAL_CONFIG_PATH | No | Set by mcp-hub: path to the Hub's JSON file (relative to this repository). Only its bitbucket block is read; the file is never written. |
 | AUTO_SYNC_ON_START | No | true syncs the account's open PRs in configured repositories in the background. Default: false. |
-| FRESHNESS_TTL_SECONDS | No | Seconds after a successful freshness check during which get_pr_context_pack does not re-check the PR on Bitbucket. 0 checks on every call. Default: 120. |
+| FRESHNESS_TTL_SECONDS | No | Seconds after a successful freshness check during which PR-specific reads do not re-check the PR on Bitbucket. 0 checks on every call. Default: 0. |
 | TICKET_PREFIXES | No | Preferred ticket prefixes. Default: WCE-,PROJ-,JIRA-. The tool also detects KEY-123 in branch names or [KEY-123] in titles. |
-| PRIVACY_* | No | Privacy controls for returned and stored PR content. Defaults are safe. |
+| PRIVACY_* | No | Privacy controls for returned and stored PR content. `PRIVACY_REMOVE_AUTHOR=true` by default; `false` opts this deployment in to sanitized commenter display names. |
 | PRIVACY_MAX_COMMIT_SUBJECTS | No | Maximum commit subjects stored and shown per PR. Default: 10; merge commits are excluded. |
 | AI_CONTEXT_ROOT | No | Context storage directory. Default: ai-context. |
 | AI_CONTEXT_COMPANY | No | Optional directory inserted before <workspace>. |
