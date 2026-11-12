@@ -100,7 +100,7 @@ try {
   send({ method: 'notifications/initialized' });
   send({ id: 2, method: 'tools/list' });
   assert.deepEqual((await waitFor(2)).result.tools.map((tool: { name: string }) => tool.name).sort(), [
-    'check_bitbucket_connection', 'get_pr_comments', 'get_pr_context_pack', 'get_pr_file_changes',
+    'check_bitbucket_connection', 'get_pr_comment', 'get_pr_comments', 'get_pr_context_pack', 'get_pr_file_changes',
     'get_pr_file_context', 'get_pr_sync_status', 'list_my_open_prs', 'list_synced_prs', 'search_pr_files', 'sync_my_open_prs'
   ]);
 } finally {
@@ -189,7 +189,7 @@ const bare = spawnSync(process.execPath, ['bin/cli.js', 'server'], {
 });
 const bareById = new Map(bare.stdout.trim().split('\n').map(line => JSON.parse(line)).map(message => [message.id, message]));
 assert.equal(bare.status, 0, 'the server starts and exits cleanly without credentials');
-assert.equal(bareById.get(2).result.tools.length, 10, 'tools are listed without credentials');
+assert.equal(bareById.get(2).result.tools.length, 11, 'tools are listed without credentials');
 assert.equal(bareById.get(3).result.isError, true, 'the check tool fails instead of the launcher');
 assert.match(bareById.get(3).result.content[0].text, /No Bitbucket credentials/);
 assert.match(bare.stderr, /Warning: BITBUCKET_EMAIL, BITBUCKET_API_TOKEN not set/);

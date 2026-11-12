@@ -20,6 +20,7 @@ const { ConfigManager } = await import('../src/config/config.manager.ts');
 const { PRContextService } = await import('../src/mcp/context.service.ts');
 const { AccessGate } = await import('../src/core/auth/access-gate.ts');
 const { OutputReader } = await import('../src/core/output/output.reader.ts');
+const { LiveReviewSnapshotStore } = await import('../src/core/output/live-review-snapshot.store.ts');
 const { DataStore } = await import('../src/core/storage/data.store.ts');
 const { readSecure, writeSecure } = await import('../src/core/storage/secure-file.ts');
 const { SyncPRsService } = await import('../src/core/orchestration/sync-prs.service.ts');
@@ -40,6 +41,7 @@ let repoStatus = 200;
 let metadataStatus = 200;
 let statusesStatus = 200;
 let commentsStatus = 200;
+let reviewCommentText = 'Please rename this, ping dev@example.com';
 const calls: Record<string, number> = { metadata: 0, diff: 0, comments: 0, user: 0 };
 globalThis.fetch = (async (input: string | URL) => {
   const url = String(input);
@@ -82,8 +84,8 @@ globalThis.fetch = (async (input: string | URL) => {
     calls.comments++;
     if (commentsStatus !== 200) return new Response('{}', { status: commentsStatus, statusText: 'Internal Server Error' });
     return ok({ values: [
-      { id: 3, parent: { id: 1 }, content: { raw: 'done, token ATATT3xFfGF0abcdefghijklmnop0123 ' + 'x'.repeat(5000) }, resolution: { type: 'resolved' }, created_on: '2026-01-02' },
-      { id: 1, content: { raw: 'Please rename this, ping dev@example.com' }, user: { type: 'app_user', display_name: 'Reviewer' }, created_on: '2026-01-01', inline: { path: REAL_PATH, to: 10 } },
+      { id: 3, parent: { id: 1 }, content: { raw: 'done, token ATATT3xFfGF0abcdefghijklmnop0123 ' + 'x'.repeat(5000) }, resolution: { type: 'resolved' }, created_on: '2026-01-02T00:00:00Z' },
+      { id: 1, content: { raw: reviewCommentText }, user: { type: 'app_user', display_name: 'Reviewer' }, created_on: '2026-01-01T00:00:00Z', inline: { path: REAL_PATH, to: 10 } },
       { id: 2, deleted: true, content: { raw: 'gone' } }
     ] });
   }
@@ -113,18 +115,22 @@ const call = async (name: string, args: Record<string, unknown>) => {
   return { isError: Boolean(res.isError), text: res.content[0].text as string };
 };
 
-// 1. Local tools before any sync
-assert.deepEqual(JSON.parse((await call('get_pr_sync_status', { pr_url: PR_URL })).text), { synced: false });
+// 1. Any PR-specific read checks freshness and syncs when there is no local revision.
+const coldStatus = JSON.parse((await call('get_pr_sync_status', { pr_url: PR_URL })).text);
+assert.equal(coldStatus.synced, true, 'a cold PR-specific status read performs the initial sync');
+assert.equal(coldStatus.source_commit, sourceHash);
+assert.deepEqual([calls.metadata, calls.diff], [1, 1]);
 const early = await call('search_pr_files', { pr_url: PR_URL });
-assert.ok(early.isError && early.text.startsWith('Error: PR is not synced'), 'search before sync is an isError result');
-console.log('  ✓ local tools report "not synced" before the first context pack');
+assert.ok(!early.isError && JSON.parse(early.text).total === 1, 'search reuses the revision synced by the first PR-specific read');
+assert.deepEqual([calls.metadata, calls.diff], [2, 1], 'search checks metadata without downloading an unchanged diff');
+console.log('  ✓ a cold local read syncs once and subsequent local reads check freshness');
 
 // 2. First context pack syncs from Bitbucket
 const pack = await call('get_pr_context_pack', { pr_url: PR_URL });
 assert.ok(!pack.isError, pack.text);
 assert.match(pack.text, /Add invoice export endpoint/);
 assert.equal(calls.diff, 1);
-assert.equal(calls.metadata, 1, 'the first sync fetches PR metadata once and the live section reuses it');
+assert.equal(calls.metadata, 3, 'the report checks freshness and reuses its metadata for the live section');
 assert.ok(!pack.text.includes('get_pr_comments'), 'the pack does not send agents to get_pr_comments for threads it already summarizes');
 console.log('  ✓ get_pr_context_pack syncs on first use');
 assert.match(pack.text, /## Review status \(live\)\nState: OPEN \(draft\)\nApprovals: 1 · Changes requested: 1 · Participants: 2 \(reviewers: 1\)\nBuild: 1 failed, 0 passed, 1 running; 1 older commit/);
@@ -135,11 +141,76 @@ assert.match(pack.text, /## Review threads \(live\)\nOpen: 1 \(1 from apps\) · 
 assert.ok(!pack.text.includes('dev@example.com'), 'live review comment is sanitized');
 console.log('  ✓ context pack includes sanitized live approvals, build status, and review threads');
 
+const reviewPRDir = OutputReader.getActiveRevision('acme', 'demo-repo', 7)!.prDir;
+const completeSnapshot = LiveReviewSnapshotStore.readCurrent(reviewPRDir);
+assert.ok(completeSnapshot?.complete, 'report publishes a complete encrypted review snapshot');
+assert.equal(completeSnapshot.comment_count, 2, 'deleted comments are excluded from the snapshot');
+assert.equal(completeSnapshot.comments[0].text, 'Please rename this, ping [REDACTED:EMAIL]', 'full comment text is sanitized before persistence');
+assert.equal(completeSnapshot.comments[0].author, undefined, 'author names remain hidden under the default privacy setting');
+assert.equal(completeSnapshot.comments[1].parent_id, 1, 'reply parent is preserved');
+assert.equal(completeSnapshot.comments[1].resolved, true, 'resolved state is preserved');
+const callsBeforeSnapshotRead = calls.comments;
+const savedComments = JSON.parse((await call('get_pr_comments', { pr_url: PR_URL, limit: 50 })).text);
+assert.equal(calls.comments, callsBeforeSnapshotRead, 'comment list reads the saved snapshot without another Bitbucket request');
+assert.equal(savedComments.snapshot_id, completeSnapshot.snapshot_id);
+assert.equal(savedComments.fetched_at, completeSnapshot.fetched_at);
+assert.equal(savedComments.complete, true);
+assert.equal(savedComments.total, 2);
+assert.ok(savedComments.comments[1].text_next_offset > 0, 'long text has a continuation offset');
+console.log('  ✓ report snapshot is encrypted, complete, sanitized and reused by the comments list');
+
+const fullComment = completeSnapshot.comments.find(comment => comment.id === 3)!;
+const detailFetchCount = calls.comments;
+let detailed = JSON.parse((await call('get_pr_comment', { pr_url: PR_URL, comment_id: 3, max_chars: 500 })).text);
+assert.equal(calls.comments, detailFetchCount, 'detail paging reads the saved snapshot instead of refetching comments');
+assert.equal(detailed.total_chars, fullComment.text.length);
+assert.equal(detailed.text.length, 500);
+assert.equal(detailed.next_offset, 500);
+assert.ok(!('severity' in detailed.comment), 'the tool does not infer comment severity');
+assert.ok(!('text' in detailed.comment), 'comment metadata stays separate from the paged body');
+let reconstructed = detailed.text;
+while (detailed.next_offset !== null) {
+  detailed = JSON.parse((await call('get_pr_comment', {
+    pr_url: PR_URL,
+    comment_id: 3,
+    snapshot_id: detailed.snapshot_id,
+    offset: detailed.next_offset,
+    max_chars: 500
+  })).text);
+  reconstructed += detailed.text;
+}
+assert.equal(reconstructed, fullComment.text, 'concatenated bounded pages reproduce the complete sanitized comment body');
+assert.ok(!reconstructed.includes('ATATT3x'), 'paged comment text stays sanitized');
+assert.ok((await call('get_pr_comment', { pr_url: PR_URL, comment_id: 999 })).text.includes('No comment 999'));
+assert.ok((await call('get_pr_comment', { pr_url: PR_URL, comment_id: -1 })).isError, 'negative comment ids are rejected');
+assert.ok((await call('get_pr_comment', { pr_url: PR_URL, comment_id: 'not-a-number' })).isError, 'malformed comment ids are rejected');
+assert.ok((await call('get_pr_comment', { pr_url: PR_URL, comment_id: 3, max_chars: 499 })).isError, 'page sizes below the bound are rejected');
+assert.ok((await call('get_pr_comment', { pr_url: PR_URL, comment_id: 3, max_chars: 100001 })).isError, 'page sizes above the bound are rejected');
+assert.ok((await call('get_pr_comment', { pr_url: PR_URL, comment_id: 3, offset: -1 })).isError, 'negative offsets are rejected');
+console.log('  ✓ get_pr_comment returns bounded pages that reconstruct full sanitized text');
+
 commentsStatus = 500;
+const previousSnapshotId = completeSnapshot.snapshot_id;
 const noComments = await call('get_pr_context_pack', { pr_url: PR_URL });
 commentsStatus = 200;
 assert.ok(!noComments.isError);
-assert.match(noComments.text, /## Review threads \(live\)\nUnavailable:/);
+assert.match(noComments.text, /Comment refresh failed/);
+assert.match(noComments.text, /Serving the last complete snapshot/);
+assert.ok(noComments.text.includes(completeSnapshot.fetched_at), 'report identifies the retained snapshot age/time');
+const retainedAfterPartial = LiveReviewSnapshotStore.readCurrent(reviewPRDir);
+assert.equal(retainedAfterPartial?.snapshot_id, previousSnapshotId, 'partial refresh never replaces the complete snapshot pointer');
+assert.deepEqual(retainedAfterPartial?.comments, completeSnapshot.comments, 'partial refresh does not alter complete snapshot contents');
+const callsBeforeStaleRead = calls.comments;
+const staleComments = JSON.parse((await call('get_pr_comments', { pr_url: PR_URL })).text);
+assert.equal(calls.comments, callsBeforeStaleRead, 'stale comment pages remain local after a failed refresh');
+assert.equal(staleComments.snapshot_id, previousSnapshotId);
+assert.equal(staleComments.fetched_at, completeSnapshot.fetched_at, 'failed refresh keeps the retained snapshot timestamp');
+assert.equal(staleComments.source_commit, completeSnapshot.source_commit, 'failed refresh keeps the retained source commit');
+assert.match(staleComments.warnings.join(' '), /Comment refresh failed: Pagination stopped at page 1/);
+assert.match(staleComments.warnings.join(' '), /age \d+s/);
+assert.equal(staleComments.refresh_attempt.complete, false);
+assert.equal(staleComments.refresh_attempt.retained_snapshot_id, previousSnapshotId);
+assert.equal(staleComments.refresh_attempt.source_commit, completeSnapshot.source_commit);
 statusesStatus = 500;
 const noBuild = await call('get_pr_context_pack', { pr_url: PR_URL });
 statusesStatus = 200;
@@ -147,15 +218,112 @@ assert.ok(!noBuild.isError);
 assert.match(noBuild.text, /Approvals: 1 .*\nBuild: unavailable \(/);
 console.log('  ✓ live review service failures do not fail the cached context pack');
 
+reviewCommentText = 'A newer review note arrived without a commit change.';
+const commentsBeforeIndependentRefresh = calls.comments;
+const commentsRefreshed = await call('get_pr_context_pack', { pr_url: PR_URL });
+assert.ok(!commentsRefreshed.isError);
+assert.equal(calls.comments, commentsBeforeIndependentRefresh + 1, 'every report fetches a fresh comment page independently of commits');
+assert.ok(commentsRefreshed.text.includes('A newer review note arrived without a commit change.'));
+assert.ok(!commentsRefreshed.text.includes('Please rename this'));
+assert.ok(LiveReviewSnapshotStore.readCurrent(reviewPRDir)?.comments[0].text.includes('A newer review note arrived'));
+console.log('  ✓ comment snapshots refresh on every report even when PR commits are unchanged');
+
+reviewCommentText = 'Original comment body. '.repeat(50);
+await call('get_pr_context_pack', { pr_url: PR_URL });
+const originalCommentPage = JSON.parse((await call('get_pr_comment', { pr_url: PR_URL, comment_id: 1, max_chars: 500 })).text);
+assert.equal(originalCommentPage.next_offset, 500);
+reviewCommentText = 'Edited comment body. '.repeat(50);
+await call('get_pr_context_pack', { pr_url: PR_URL });
+const staleContinuation = await call('get_pr_comment', {
+  pr_url: PR_URL, comment_id: 1, snapshot_id: originalCommentPage.snapshot_id,
+  offset: originalCommentPage.next_offset, max_chars: 500
+});
+assert.ok(staleContinuation.isError, 'continuing an edited comment with the original snapshot must fail');
+assert.match(staleContinuation.text, /snapshot.*changed/i);
+assert.match(staleContinuation.text, /restart.*offset[ =]0/i);
+assert.ok(!staleContinuation.text.includes('Edited comment body'), 'stale continuation never returns text from another snapshot');
+const missingSnapshot = await call('get_pr_comment', { pr_url: PR_URL, comment_id: 1, offset: 500, max_chars: 500 });
+assert.ok(missingSnapshot.isError, 'continuation requires a snapshot id');
+assert.match(missingSnapshot.text, /snapshot_id/);
+assert.match(missingSnapshot.text, /restart.*offset[ =]0/i);
+const restartedCommentPage = JSON.parse((await call('get_pr_comment', { pr_url: PR_URL, comment_id: 1, max_chars: 500 })).text);
+assert.notEqual(restartedCommentPage.snapshot_id, originalCommentPage.snapshot_id, 'refresh publishes a new snapshot');
+assert.ok(restartedCommentPage.text.startsWith('Edited comment body.'));
+reviewCommentText = 'A newer review note arrived without a commit change.';
+console.log('  ✓ comment continuation rejects changed or missing snapshot ids and supports restarting');
+
+// Without a previous snapshot, partial pages are explicitly incomplete and remain ephemeral.
+for (const dir of OutputReader.getPRDirectories('acme', 'demo-repo', 7)) {
+  fs.rmSync(path.join(dir, 'live-review'), { recursive: true, force: true });
+}
+const noAttemptComments = await call('get_pr_comments', { pr_url: PR_URL });
+assert.ok(noAttemptComments.isError, 'before any refresh, comments should request a context pack');
+assert.match(noAttemptComments.text, /No complete review snapshot is available.*get_pr_context_pack/);
+commentsStatus = 500;
+const initialPartial = await call('get_pr_context_pack', { pr_url: PR_URL });
+assert.ok(!initialPartial.isError);
+assert.match(initialPartial.text, /incomplete: some comment pages failed/);
+assert.match(initialPartial.text, /Comment refresh failed/);
+assert.ok(!initialPartial.text.includes('Serving the last complete snapshot'));
+assert.equal(LiveReviewSnapshotStore.readCurrent(OutputReader.getActiveRevision('acme', 'demo-repo', 7)!.prDir), undefined);
+const incompleteFirstComments = await call('get_pr_comments', { pr_url: PR_URL });
+assert.ok(!incompleteFirstComments.isError, 'an incomplete initial fetch should return explicit completeness metadata');
+const incompleteFirstResult = JSON.parse(incompleteFirstComments.text);
+assert.equal(incompleteFirstResult.complete, false);
+assert.equal(incompleteFirstResult.snapshot_id, null);
+assert.deepEqual(incompleteFirstResult.comments, [], 'partial rows must not be presented as a complete review');
+assert.match(incompleteFirstResult.warnings.join(' '), /Comment refresh failed/);
+commentsStatus = 200;
+await call('get_pr_context_pack', { pr_url: PR_URL });
+console.log('  ✓ an incomplete first comment fetch is explicit and never saved as complete');
+
+// A failed status-directory sidecar migration still exposes the previous complete snapshot.
+const preMigrationSnapshot = LiveReviewSnapshotStore.readCurrent(reviewPRDir)!;
+const originalSidecarMigration = LiveReviewSnapshotStore.migrateStatusDirectory;
+try {
+  (LiveReviewSnapshotStore as any).migrateStatusDirectory = () => { throw new Error('simulated sidecar migration failure'); };
+  prDraft = false;
+  commentsStatus = 500;
+  const migrationFallback = await call('get_pr_context_pack', { pr_url: PR_URL });
+  assert.ok(!migrationFallback.isError);
+  assert.match(migrationFallback.text, /Serving the last complete snapshot/);
+  const activeAfterFailure = OutputReader.getActiveRevision('acme', 'demo-repo', 7)!;
+  assert.notEqual(path.resolve(activeAfterFailure.prDir), path.resolve(reviewPRDir), 'PR revision moved to the new status directory');
+  assert.equal(LiveReviewSnapshotStore.readCurrent(activeAfterFailure.prDir), undefined, 'failed sidecar migration leaves no partial current pointer at the destination');
+  const oldDirectoryComments = JSON.parse((await call('get_pr_comments', { pr_url: PR_URL })).text);
+  assert.equal(oldDirectoryComments.snapshot_id, preMigrationSnapshot.snapshot_id, 'comments fall back to the previous status directory snapshot');
+} finally {
+  (LiveReviewSnapshotStore as any).migrateStatusDirectory = originalSidecarMigration;
+  commentsStatus = 200;
+  prDraft = true;
+}
+await call('get_pr_context_pack', { pr_url: PR_URL });
+console.log('  ✓ failed status migration keeps the old complete comment snapshot readable');
+
+const priorRemoveAuthor = process.env.PRIVACY_REMOVE_AUTHOR;
+process.env.PRIVACY_REMOVE_AUTHOR = 'false';
+(ConfigManager as any).cached = null;
+await call('get_pr_context_pack', { pr_url: PR_URL });
+const authorEnabled = JSON.parse((await call('get_pr_comment', { pr_url: PR_URL, comment_id: 1 })).text);
+assert.equal(authorEnabled.comment.author, 'Reviewer', 'author names are available only under explicit opt-in');
+process.env.PRIVACY_REMOVE_AUTHOR = 'true';
+(ConfigManager as any).cached = null;
+const authorHidden = JSON.parse((await call('get_pr_comment', { pr_url: PR_URL, comment_id: 1 })).text);
+assert.ok(!('author' in authorHidden.comment), 'author names disappear when privacy removal is enabled');
+if (priorRemoveAuthor === undefined) delete process.env.PRIVACY_REMOVE_AUTHOR;
+else process.env.PRIVACY_REMOVE_AUTHOR = priorRemoveAuthor;
+(ConfigManager as any).cached = null;
+
 metadataStatus = 500;
 const priorCommentCalls = calls.comments;
 const offline = await call('get_pr_context_pack', { pr_url: PR_URL });
 metadataStatus = 200;
 assert.ok(!offline.isError);
 assert.match(offline.text, /^Note: could not check Bitbucket/);
-assert.match(offline.text, /## Live review data\nSkipped: Bitbucket could not be reached\./);
-assert.equal(calls.comments, priorCommentCalls, 'skip live calls if metadata check failed');
-console.log('  ✓ cached context is available offline without waiting on other live endpoints');
+assert.match(offline.text, /## Live review status\nSkipped: Bitbucket could not be reached\./);
+assert.ok(calls.comments > priorCommentCalls, 'comments refresh independently when metadata freshness check fails');
+assert.match(offline.text, /## Review threads \(live\)/, 'offline metadata does not suppress the independent review comment fetch');
+console.log('  ✓ cached context and an independent comment refresh remain available when metadata is offline');
 
 // 3. Read Strategy lists the files to open next (regression: it read a non-existent field)
 assert.match(pack.text, /Read next: .*file_0001/);
@@ -167,23 +335,26 @@ assert.equal(draftListing.next_offset, null);
 console.log('  ✓ list_synced_prs exposes encrypted local PRs by status');
 
 // 4. Unchanged commits: freshness check only, no full re-sync
+const diffBeforeUnchangedReport = calls.diff;
 await call('get_pr_context_pack', { pr_url: PR_URL });
-assert.equal(calls.diff, 1, 'no re-download while the head commits are unchanged');
+assert.equal(calls.diff, diffBeforeUnchangedReport, 'no re-download while the head commits are unchanged');
 
 // 5. New source commit: automatic re-sync, and the pack names the files that changed
 sourceHash = 'cccccccccccc';
 extraLine = '\n+  const added = 1;';
 const metadataBeforeResync = calls.metadata;
+const diffBeforeResync = calls.diff;
 const resynced = await call('get_pr_context_pack', { pr_url: PR_URL });
 assert.equal(calls.metadata, metadataBeforeResync + 1, 'the re-sync and the live section reuse the metadata of the freshness check');
 assert.match(resynced.text, /## Changed since last sync \(rev_aaaaaaa_bbbbbbb\)\n- file_0001 `src\/\.\.\.\/billing\/InvoiceController\.ts` \(modified\)/);
-assert.equal(calls.diff, 2, 're-sync after the source commit moved');
+assert.equal(calls.diff, diffBeforeResync + 1, 're-sync after the source commit moved');
 assert.equal(JSON.parse((await call('get_pr_sync_status', { pr_url: PR_URL })).text).source_commit, sourceHash);
 console.log('  ✓ stale revision is detected by commit hash and re-synced');
 
 // 6. Concurrent refreshes share one fetch
+const diffBeforeConcurrentRefresh = calls.diff;
 await Promise.all([1, 2, 3].map(() => call('get_pr_context_pack', { pr_url: PR_URL, refresh: true })));
-assert.equal(calls.diff, 3, 'three concurrent refreshes trigger one download');
+assert.equal(calls.diff, diffBeforeConcurrentRefresh + 1, 'three concurrent refreshes trigger one download');
 console.log('  ✓ concurrent refreshes are deduplicated');
 
 // 7. Search, then paged file reads
@@ -258,8 +429,9 @@ assert.equal(inline.line, 10);
 assert.ok(!inline.text.includes('dev@example.com') && !('author' in inline), 'email redacted, author removed by default');
 assert.ok(!comments.comments[1].text.includes('ATATT3x') && comments.comments[1].resolved === true);
 assert.equal(inline.author_kind, 'app');
-assert.match(comments.comments[1].text, /\n\[truncated: 4000 of \d+ chars\]$/);
-assert.ok(comments.comments[1].text.length < 4100);
+assert.equal(comments.comments[1].text.length, 4000, 'comment list returns a bounded text preview');
+assert.ok(comments.comments[1].text_total_chars > 4000, 'the full sanitized body length is available');
+assert.equal(comments.comments[1].text_next_offset, 4000, 'long text exposes the next detail offset');
 assert.equal(JSON.parse((await call('get_pr_comments', { pr_url: PR_URL, include_resolved: false })).text).total, 1);
 const firstPage = JSON.parse((await call('get_pr_comments', { pr_url: PR_URL, limit: 1 })).text);
 assert.equal(firstPage.comments.length, 1);

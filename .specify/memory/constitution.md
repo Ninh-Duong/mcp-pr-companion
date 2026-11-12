@@ -1,35 +1,54 @@
+<!--
+Sync Impact Report
+Version: none -> 1.0.0
+Modified principles: initial constitution derived from the existing AGENTS.md invariants
+Added sections: security and data handling; development and review gates
+Removed sections: none
+Follow-up: keep detailed agent procedures in AGENTS.md
+-->
+
 # mcp-pr-companion Constitution
 
 ## Core Principles
 
-### I. Pure JSON-RPC Stdio Stream (NON-NEGOTIABLE)
-`stdout` MUST carry only valid MCP JSON-RPC frames. No module under `src/mcp/`, `src/core/`, or `src/utils/` may call `console.log` or write to `process.stdout`. All server and launcher diagnostics MUST go through `Logger` (`stderr` and `Logs/mcp-server.log`), while interactive terminal output (`console.log`) is permitted solely inside `src/cmd/`.
+### I. Bitbucket Access Is Read-Only
 
-### II. Strictly Read-Only Upstream Access (NON-NEGOTIABLE)
-Bitbucket Cloud integration MUST be strictly read-only (`GET` requests only). Every HTTP request MUST route through `fetchWithRetry` in `src/core/bitbucket/http.ts`, which MUST remain the sole `fetch()` call site in the codebase. No approval, merge, comment, or mutation endpoint may ever be added, and token scopes stay minimal (`read:user`, `read:pullrequest`, `read:repository`).
+The companion MUST issue only read requests to Bitbucket. All network calls MUST pass through the shared Bitbucket client and retry/pagination controls. The token MUST use only the documented read scopes.
 
-### III. Mandatory Privacy Sanitization & Redaction (NON-NEGOTIABLE)
-No unsanitized upstream text, secret, token, credential, email, UUID, or absolute local filesystem path may leave the process or persist unredacted. All persisted PR content MUST pass allowlist projection, `PIISanitizer`, `SecretScanner`, and `PathSanitizer`. Live responses and tool/validation errors MUST pass `SecretScanner` (and `PIISanitizer` where applicable). User-authored PR content returned to AI agents MUST be explicitly marked as untrusted data.
+### II. Sanitize Data and Encrypt Local PR Content
 
-### IV. Bounded & Paged Tool Outputs (NON-NEGOTIABLE)
-Every growing text payload MUST be bounded or paged (`offset` / `max_chars` via `PRContextService.page()` or explicit character caps), and every list or batch response MUST expose explicit `limit` / `offset` bounds or row caps so an MCP client's context budget cannot be overwhelmed by a single response.
+No unsanitized PR content, secrets, credentials, or private file paths may leave the process. Every file under `ai-context/` MUST use the secure-file APIs after a successful access-gate check. Raw Bitbucket responses MUST NOT be persisted or returned.
 
-### V. Disk Source of Truth, Atomicity & Relative Portability
-The encrypted on-disk store (`ai-context/`) MUST be the sole source of truth for PR state—no process-wide in-memory PR caches may be written by MCP paths. Revision publication MUST follow stage → pre-write schema/integrity validation → atomic rename → `current.json` commit point last. All runtime paths MUST stay relative to the project root working directory set by `bin/cli.js`.
+### III. Bound Output and Report Completeness
 
-### VI. Frozen Contracts & Zero New Dependencies
-The Schema v4 on-disk layout (`current.json`, `manifest.json`, `files.index.jsonl`, `commits.jsonl`, `coverage.json`, `files/<id>/change.json`, `patch.diff`, `file_NNNN`), the `PRC1` encryption header/magic, and the HKDF `INFO` string are frozen (only additive optional fields in zod schemas are permitted). No new npm dependency may be added without explicit justification in `docs/DEPENDENCIES.md`.
+Growing text and collections MUST be paged or capped. Responses MUST distinguish complete data from partial, stale, or unavailable data and MUST surface warnings rather than imply completeness.
 
-### VII. Configuration, Access Control & Encryption Gate
-All configuration MUST come solely from environment variables read in `src/config/config.manager.ts` (loaded by `bin/cli.js` with precedence: process env > Hub `bitbucket` block > `.env`), never committed or logged. `ALLOWED_EMAILS` MUST be enforced on every CLI and MCP path. Every read/write under `ai-context/` MUST go through `secure-file.ts` after `AccessGate.unlock(workspace, repo)` verifies live repository access, and decrypted content MUST match its expected PR scope.
+### IV. Preserve the Version 4 Storage Contract
 
-### VIII. Test-First & Ponytail Simplicity
-Every fix MUST start with a failing test using `node:assert/strict` and a mocked `globalThis.fetch` (never hitting real Bitbucket). `npm test` runs each file in an isolated temp `cwd`; MCP tools MUST be tested end-to-end through `McpServer` + `Client` over `InMemoryTransport`. Prefer stdlib and existing helpers over new abstractions, and annotate intentional fixed limits with `// ponytail: <limit>, <upgrade path>`.
+Existing schema-v4 filenames, required fields, revision IDs, encryption format, and publication ordering are compatibility invariants. New data MUST be additive and independently versioned where it is not commit-bound; current revisions MUST remain readable without migration.
 
-## Governance & Quality Gates
+### V. Test Behavior Before Implementation
 
-- **Authority**: This constitution encodes `AGENTS.md` §1–§2 and `docs/STANDARDS.md`; it supersedes convenience refactors.
-- **Definition of Done**: `npx tsc --noEmit` and `npm run typecheck` MUST pass cleanly, `npm test` MUST print `✓ N test files passed`, `node bin/cli.js check` MUST pass, all invariant spot checks MUST pass, and `AGENTS.md` §2 documentation must be updated in the same commit.
-- **Language**: Source code, comments, logs, error messages, and Markdown documentation MUST be in English.
+Behavior changes MUST start with a test that fails for the missing behavior. Changes to tool contracts, storage, encryption, pagination, or sync behavior MUST include focused integration or contract tests and documentation updates.
 
-**Version**: 1.0.0 | **Ratified**: 2026-11-12 | **Last Amended**: 2026-11-12
+### VI. Prefer the Smallest Maintainable Change
+
+Reuse existing modules and standard-library capabilities before introducing abstractions or dependencies. Dependencies require an explicit rationale in `docs/DEPENDENCIES.md`. Paths remain relative to the repository root.
+
+## Security and Data Handling
+
+- Author display names remain hidden by default. Any author disclosure MUST be an explicit deployment configuration and MUST continue to sanitize the associated comment content.
+- Tools that can write local cache data MUST declare that side effect in their MCP annotations.
+- Logs and errors MUST not expose tokens, raw API responses, repository UUIDs, or unredacted secrets.
+
+## Development and Review Gates
+
+- Tests run in isolated temporary working directories and MUST NOT contact the real Bitbucket API.
+- Every changed tool contract MUST be reflected in `src/mcp/tools.ts`, the README, the child integration guide, and the mcp-hub child contract.
+- Before completion, run `npm test`, `npx tsc --noEmit`, and `node bin/cli.js check`; report any environment-dependent result accurately.
+
+## Governance
+
+This constitution distills the existing repository invariants in `AGENTS.md`; it does not replace that operating manual. Changes to these principles require a documented Spec Kit amendment and a version bump: MAJOR for incompatible governance changes, MINOR for new or materially expanded principles, and PATCH for clarification. Feature plans and reviews MUST identify conflicts with these principles before implementation.
+
+**Version**: 1.0.0 | **Ratified**: 2026-11-11 | **Last Amended**: 2026-11-11

@@ -20,6 +20,7 @@ import {
   writeSecure
 } from '../storage/secure-file.js';
 import { PRStorageStatus } from '../pr-status.js';
+import { LiveReviewSnapshotStore } from './live-review-snapshot.store.js';
 
 export class RevisionWriter {
   static getPROutputDir(workspace: string, repoSlug: string, prId: number, company?: string, root?: string, status?: PRStorageStatus): string {
@@ -223,6 +224,7 @@ export class RevisionWriter {
           }
         }
       }
+      LiveReviewSnapshotStore.migrateStatusDirectory(previousPrDir, prDir, scope);
       fs.rmSync(previousPrDir, { recursive: true, force: true });
     } catch {
       // The newly published revision is valid; leave any unmigrated encrypted source data in place.
