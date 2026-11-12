@@ -29,6 +29,7 @@ Copy the hub template `config/mcps/mcp-pr-companion.example.json`:
 - `inheritEnv` includes `APPDATA`, `LOCALAPPDATA`, `PATHEXT` and `COMSPEC` so that `npm` works when the launcher has to install or rebuild on Windows.
 - `timeoutSeconds: 300` covers a full sync of a large PR (diff download allows up to 45 s, plus pagination).
 - To override a setting for the hub only (for example `PRIVACY_FILE_PATH_MODE`), put it in `env`. Never put the token there.
+- Keep `PRIVACY_REMOVE_AUTHOR` at its default `true` unless this Hub deployment is explicitly allowed to show reviewer display names. To opt in for one child deployment, set its private child config `env.PRIVACY_REMOVE_AUTHOR` to the string `false`; the global `.env.example` default remains hidden.
 
 ### Credentials from the hub (`CENTRAL_CONFIG_PATH`)
 
@@ -68,6 +69,7 @@ The hub passes `CENTRAL_CONFIG_PATH` (for example `../mcp-hub/config/private/mcp
       { "server": "mcp-pr-companion", "name": "get_pr_sync_status", "exposeAs": "pr__get_pr_sync_status" },
       { "server": "mcp-pr-companion", "name": "list_synced_prs", "exposeAs": "pr__list_synced_prs" },
       { "server": "mcp-pr-companion", "name": "get_pr_comments", "exposeAs": "pr__get_pr_comments" },
+      { "server": "mcp-pr-companion", "name": "get_pr_comment", "exposeAs": "pr__get_pr_comment" },
       { "server": "mcp-pr-companion", "name": "list_my_open_prs", "exposeAs": "pr__list_my_open_prs" },
       { "server": "mcp-pr-companion", "name": "sync_my_open_prs", "exposeAs": "pr__sync_my_open_prs" },
       { "server": "mcp-pr-companion", "name": "check_bitbucket_connection", "exposeAs": "pr__check_bitbucket_connection" }
@@ -87,10 +89,12 @@ Both entries start `enabled: false`. Enable them after the child's local `check`
 | Forwards tool schemas and annotations unchanged | zod `inputSchema` and annotations on every tool |
 | Prefixes tools with `pr__` | Child tool names have no prefix |
 | Prefixes each tool description with `[pr via mcp-pr-companion]`, serves its contract `../mcp-hub/docs/mcps/mcp-pr-companion.md` as a prompt, and does **not** forward this server's `INSTRUCTIONS` | Agents under the hub learn the workflow from the hub contract; `INSTRUCTIONS` reaches only direct connections. Keep tool descriptions self-contained and the contract in step with `INSTRUCTIONS`. |
-| Applies a per-call timeout | `get_pr_context_pack` may download a full diff when missing, stale, or awaiting migration and fetch statuses/comments live; `sync_my_open_prs` can process many PRs. Other tools make at most one access-check request per repository per minute. A large open-PR batch can approach `timeoutSeconds`; call it per repository or raise the timeout if observed calls need it. |
+| Applies a per-call timeout | Any PR-specific read may check metadata and sync a changed/missing revision; only changed PRs download the full diff. `get_pr_context_pack` also fetches all comment pages and live statuses. `sync_my_open_prs` can process many PRs. A large open-PR batch can approach `timeoutSeconds`; call it per repository or raise the timeout if observed calls need it. |
 | Launches the child once per client session | `AUTO_SYNC_ON_START=true` (child `.env`, or `env` in the hub child config) syncs in the background at each launch |
 | Needs a read-only upstream health check for `scripts/smoke.py` (`docs/child-mcp-compatibility.md`) | `check_bitbucket_connection` returns `{"connected": true, "config_source": {"credentials", "workspace", "repository", "allowed_emails"}}` only when the token authenticates; each source is `env`, `hub`, `local` or `unset` |
 | Passes `CENTRAL_CONFIG_PATH` to its JSON file | The launcher fills unset Bitbucket values from its `bitbucket` block (§2), falls back to `.env` with a warning when the file is missing or broken, and never writes it |
+
+`get_pr_comments` reads the latest complete encrypted snapshot with bounded previews; `get_pr_comment` pages the full sanitized body. A report refreshes the snapshot even if commits are unchanged. Incomplete refresh keeps the previous complete snapshot and exposes its age and sanitized warning. Approval/build statuses are live-only, and the companion does not infer comment severity. PR-specific cache readers declare their possible local cache writes in MCP annotations.
 
 Renaming a tool, changing its parameters or moving the log path requires updating the hub's `hub.json` allowlist (the user does this), `docs/mcps/mcp-pr-companion.md` and `scripts/smoke.py` in the same change.
 
