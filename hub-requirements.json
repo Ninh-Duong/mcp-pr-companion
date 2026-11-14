@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "groups": [
+    {
+      "label": "Bitbucket",
+      "anyOf": [
+        ["bitbucket.email", "bitbucket.api_token", "bitbucket.workspace"]
+      ]
+    }
+  ]
+}

@@ -49,6 +49,7 @@ The hub passes `CENTRAL_CONFIG_PATH` (for example `../mcp-hub/config/private/mcp
 
 - Priority per value: process env > hub `bitbucket` block > this repo's `.env` > default. Empty strings count as unset.
 - Without `CENTRAL_CONFIG_PATH` (standalone), only `.env` applies, as before.
+- `hub-requirements.json` (repo root) lists the Bitbucket fields mcp-hub checks in the hub block: `email`, `api_token`, `workspace`. A gap shows as **Config incomplete** in the mcp-hub desktop app; the server still starts and uses `.env`.
 - A missing or broken hub file, or one without a `bitbucket` block, logs a launcher warning (stderr and `Logs/mcp-server.log`) and `.env` is used. The child never writes the hub file.
 - `node bin/cli.js check` and `check_bitbucket_connection` report each group's source (`env`, `hub`, `local`, `unset`): never values, never the hub file path. `credentials` is the source of `BITBUCKET_API_TOKEN`.
 
